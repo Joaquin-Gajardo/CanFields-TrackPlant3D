@@ -94,7 +94,7 @@ python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u
 ```
 Pheno4D dataset:
 ```bash
-# Train
+# Train CanFields
 python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -d pheno4d -u True -m False -c 0,8,1 -ev 6000
 
 # Eval: create canonical shape
