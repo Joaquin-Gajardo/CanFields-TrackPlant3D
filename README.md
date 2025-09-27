@@ -92,6 +92,17 @@ To train CanFields using sampled points from raw scans, execute:
 # Train CanFields
 python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u True -m False -c 0,15,1 -ev 7000
 ```
+Pheno4D dataset:
+```bash
+# Train
+python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -d pheno4d -u True -m False -c 0,8,1 -ev 6000
+
+# Eval: create canonical shape
+python eval_sphere.py -d pheno4d -e 5000 -s 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+
+# Eval: deform canonical shape
+python eval_sphere.py -d pheno4d -e 5000 -s 2 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+```
 
 ---
 ## Citation

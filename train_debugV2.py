@@ -50,8 +50,11 @@ def velocity_test():
     elif args.dataset_name =="medical":
         medical_path= "datasets/Medical/"
         specs["ShapePath"] = medical_path + args.object_name
+    elif args.dataset_name == "pheno4d":
+        # For Pheno4D, use the object_name as the full path
+        specs["ShapePath"] = args.object_name
     else:
-        raise ValueError(f"The variable must be in either animals,medical or defaust")
+        raise ValueError(f"The variable must be in either animals, medical, defaust, or pheno4d")
     
     # load_dataset
     if args.adjust_use == "True":

@@ -21,3 +21,4 @@ scikit-image
 torchdiffeq==0.2.3
 wandb==0.16.3
 trimesh
+open3d
