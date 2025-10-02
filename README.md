@@ -48,13 +48,13 @@ pip install -r requirements_updated.txt
 # pip install torch==1.13.0+cu116 torchvision==0.14.0+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
 
 # # Install compatible PyTorch3D from source (version 0.7.2). See https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md
-# pip install --no-index --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu116_pyt1130/download.html
+# pip install pytorch3d@https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu116_pyt1130/pytorch3d-0.7.2-cp39-cp39-linux_x86_64.whl
 
 # # Install torchmeta 1.8.0 from fork (original requires torch<1.10.0 and torchvision<0.11.0)
 # pip install git+https://github.com/Joaquin-Gajardo/pytorch-meta.git@1.8.0-torchvision-fix
 
 # # Install remaining dependencies with compatible versions
-# pip install GPUtil==1.4.0 numpy==1.22.4 plyfile==1.1 point_cloud_utils==0.30.4 pynvml==11.5.0 pytest==8.1.1 scikit_learn==1.3.2 scipy==1.7.3 scikit-image torchdiffeq==0.2.3 wandb==0.16.3 trimesh
+# pip install GPUtil==1.4.0 numpy==1.22.4 plyfile==1.1 point_cloud_utils==0.30.4 pynvml==11.5.0 pytest==8.1.1 scikit_learn==1.3.2 scipy==1.7.3 scikit-image torchdiffeq==0.2.3 wandb==0.16.3 trimesh open3d
 ```
 
 ## Quick Evaluation
@@ -92,7 +92,8 @@ To train CanFields using sampled points from raw scans, execute:
 # Train CanFields
 python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u True -m False -c 0,15,1 -ev 7000
 ```
-Pheno4D dataset:
+### Pheno4D dataset
+#### Leaf sequence
 ```bash
 # Train CanFields
 python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -d pheno4d -u True -m False -c 0,8,1 -ev 6000
@@ -103,12 +104,16 @@ python eval_sphere.py -d pheno4d -e 5000 -s 1 -o datasets/Pheno4D/tomato/tomato2
 # Eval: deform canonical shape
 python eval_sphere.py -d pheno4d -e 5000 -s 2 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 ```
+#### Plant sequence
+```bash
+python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/plants/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 6000
+```
 
-## Animation
+#### Animation
 To animate the reconstructed sequence, run:
 
 ```bash
-python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -en tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1 --num_frames 24 --fps 2
+python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -en tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1 --num_frames 8 --fps 2
 ```
 ---
 ## Citation

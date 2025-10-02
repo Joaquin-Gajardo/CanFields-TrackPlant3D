@@ -136,6 +136,7 @@ def render_mesh_frame(
     current_time,
     resolution=(1920, 1080),
     highlight_scans=True,
+    use_mesh_colors=False,
     vis=None,
 ):
     """
@@ -171,11 +172,14 @@ def render_mesh_frame(
         if (
             hasattr(mesh.visual, "vertex_colors")
             and mesh.visual.vertex_colors is not None
+            and use_mesh_colors
         ):
             colors = mesh.visual.vertex_colors[:, :3] / 255.0
             o3d_mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
         elif (
-            hasattr(mesh.visual, "face_colors") and mesh.visual.face_colors is not None
+            hasattr(mesh.visual, "face_colors")
+            and mesh.visual.face_colors is not None
+            and use_mesh_colors
         ):
             # Convert face colors to vertex colors
             face_colors = mesh.visual.face_colors[:, :3] / 255.0
@@ -188,8 +192,8 @@ def render_mesh_frame(
             vertex_colors /= np.maximum(counts[:, None], 1)
             o3d_mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
         else:
-            # Default green color
-            colors = np.tile([0.5, 0.8, 0.5], (len(mesh.vertices), 1))
+            # Default gray color
+            colors = np.tile([0.7, 0.7, 0.7], (len(mesh.vertices), 1))
             o3d_mesh.vertex_colors = o3d.utility.Vector3dVector(colors)
 
     # Compute normals for better lighting
@@ -379,20 +383,23 @@ def create_animation(args):
 
         # Add text overlay with frame info
         from PIL import Image, ImageDraw, ImageFont
+
         frame_pil = Image.fromarray((frame_img * 255).astype(np.uint8))
         draw = ImageDraw.Draw(frame_pil)
 
         # Add text with frame number and time
         text = f"Frame {frame_idx} | Time: {float(back_time.cpu()):.4f}"
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40
+            )
         except:
             font = ImageFont.load_default()
 
         # Draw text with black outline for visibility
         x, y = 20, 20
-        for adj in [(-2,-2), (-2,2), (2,-2), (2,2)]:
-            draw.text((x+adj[0], y+adj[1]), text, font=font, fill=(0, 0, 0))
+        for adj in [(-2, -2), (-2, 2), (2, -2), (2, 2)]:
+            draw.text((x + adj[0], y + adj[1]), text, font=font, fill=(0, 0, 0))
         draw.text((x, y), text, font=font, fill=(255, 255, 255))
 
         # Save frame
