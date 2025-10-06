@@ -116,6 +116,15 @@ To animate the reconstructed sequence, run:
 python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -en tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1 --num_frames 8 --fps 2
 ```
 ---
+
+## Training on ETH HPC (euler)
+```bash
+module purge
+conda activate canfields
+module load stack/2024-05 gcc/13.2.0 cuda/12.2.1 eth_proxy
+# Then run training command as above
+```
+
 ## Citation
 
    If you find our repo useful for your research, please consider citing our paper:
