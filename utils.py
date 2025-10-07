@@ -20,6 +20,7 @@ def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
+checkpoint_subdir = "checkpoints"
 model_params_subdir = "ModelParameters"
 optimizer_params_subdir = "OptimizerParameters"
 latent_codes_subdir = "LatentCodes"
@@ -294,7 +295,7 @@ def configure_logging(args):
 
 def get_model_params_dir(experiment_dir, create_if_nonexistent=False):
 
-    dir = os.path.join(experiment_dir, model_params_subdir)
+    dir = os.path.join(experiment_dir, checkpoint_subdir, model_params_subdir)
     if create_if_nonexistent and not os.path.isdir(dir):
         os.makedirs(dir)
     return dir
@@ -302,7 +303,7 @@ def get_model_params_dir(experiment_dir, create_if_nonexistent=False):
 
 def get_optimizer_params_dir(experiment_dir, create_if_nonexistent=False):
 
-    dir = os.path.join(experiment_dir, optimizer_params_subdir)
+    dir = os.path.join(experiment_dir, checkpoint_subdir, optimizer_params_subdir)
 
     if create_if_nonexistent and not os.path.isdir(dir):
         os.makedirs(dir)
@@ -313,7 +314,7 @@ def get_optimizer_params_dir(experiment_dir, create_if_nonexistent=False):
 # get_adjust_latent_codes_dir
 def get_adjust_latent_codes_dir(experiment_dir, create_if_nonexistent=False):
 
-    dir = os.path.join(experiment_dir, adjust_latent_codes_subdir)
+    dir = os.path.join(experiment_dir, checkpoint_subdir, adjust_latent_codes_subdir)
 
     if create_if_nonexistent and not os.path.isdir(dir):
         os.makedirs(dir)
@@ -323,7 +324,7 @@ def get_adjust_latent_codes_dir(experiment_dir, create_if_nonexistent=False):
 
 def get_shape_latent_codes_dir(experiment_dir, create_if_nonexistent=False):
 
-    dir = os.path.join(experiment_dir, shape_latent_codes_subdir)
+    dir = os.path.join(experiment_dir, checkpoint_subdir, shape_latent_codes_subdir)
 
     if create_if_nonexistent and not os.path.isdir(dir):
         os.makedirs(dir)
@@ -333,7 +334,7 @@ def get_shape_latent_codes_dir(experiment_dir, create_if_nonexistent=False):
 
 def get_latent_codes_dir(experiment_dir, create_if_nonexistent=False):
 
-    dir = os.path.join(experiment_dir, latent_codes_subdir)
+    dir = os.path.join(experiment_dir, checkpoint_subdir, latent_codes_subdir)
 
     if create_if_nonexistent and not os.path.isdir(dir):
         os.makedirs(dir)
