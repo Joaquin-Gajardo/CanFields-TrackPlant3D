@@ -128,7 +128,7 @@ def load_model_latents():
     obj_name = args.object_name
 
     # Create results folder structure with experiment name
-    base_results_path = "results"
+    base_results_path = f"results/{args.dataset_name}"
 
     # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
     if args.dataset_name == "pheno4d" and args.experiment_name:

@@ -105,8 +105,11 @@ python eval_sphere.py -d pheno4d -e 5000 -s 1 -o datasets/Pheno4D/tomato/tomato2
 python eval_sphere.py -d pheno4d -e 5000 -s 2 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 ```
 #### Plant sequence
+Note that this will require a GPU with at least 40GB of memory.
 ```bash
-python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/plants/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 6000
+python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/plants/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 15000
+python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+python eval_sphere.py -d pheno4d -e 15000 -s 2 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 ```
 
 #### Animation
