@@ -74,7 +74,7 @@ def build_args():
         "-e",
         dest="epoch",
         required=True,
-        help="save_path epoch number:15000 or 20000",
+        help="Checkpoint selection: 'all' for all checkpoints, 'last' for most recent, or specific epoch number (e.g., 15000)",
     )
     arg_parser.add_argument(
         "--step",
@@ -118,12 +118,79 @@ def clear_folder(folder_path):
             print(f"Deleted folder: {item_path}")
 
 
-def load_model_latents():
+def get_available_checkpoints(experiment_directory):
+    """
+    Discover available checkpoint files in the experiment directory.
+    Returns a sorted list of epoch numbers.
+    """
+    checkpoints_dir = os.path.join(experiment_directory, "checkpoints", "ModelParameters")
+    if not os.path.exists(checkpoints_dir):
+        raise ValueError(f"Checkpoints directory not found: {checkpoints_dir}")
+
+    checkpoint_files = [f for f in os.listdir(checkpoints_dir) if f.endswith(".pth")]
+
+    if not checkpoint_files:
+        raise ValueError(f"No checkpoint files found in {checkpoints_dir}")
+
+    # Extract epoch numbers from filenames (e.g., 15000.pth -> 15000)
+    epochs = []
+    for f in checkpoint_files:
+        epoch_str = f.replace(".pth", "")
+        try:
+            epochs.append(int(epoch_str))
+        except ValueError:
+            continue
+
+    if not epochs:
+        raise ValueError(f"Could not parse epoch numbers from checkpoint files in {checkpoints_dir}")
+
+    return sorted(epochs)
+
+
+def select_epochs_to_evaluate(epoch_arg, experiment_directory):
+    """
+    Based on the epoch argument, return a list of epochs to evaluate.
+
+    Args:
+        epoch_arg: String - 'all', 'last', or a specific epoch number
+        experiment_directory: Path to the experiment directory
+
+    Returns:
+        List of epoch numbers to evaluate
+    """
+    available_epochs = get_available_checkpoints(experiment_directory)
+
+    if epoch_arg.lower() == 'all':
+        return available_epochs
+    elif epoch_arg.lower() == 'last':
+        return [available_epochs[-1]]
+    else:
+        # Specific epoch number
+        try:
+            specific_epoch = int(epoch_arg)
+            if specific_epoch not in available_epochs:
+                print(f"Warning: Requested epoch {specific_epoch} not found. Available epochs: {available_epochs}")
+                print(f"Using closest available epoch...")
+                # Find closest epoch
+                closest_epoch = min(available_epochs, key=lambda x: abs(x - specific_epoch))
+                return [closest_epoch]
+            return [specific_epoch]
+        except ValueError:
+            raise ValueError(f"Invalid epoch argument: {epoch_arg}. Must be 'all', 'last', or a number.")
+
+
+def load_model_latents(args, epoch_num):
+    """
+    Load model and latents for a specific epoch.
+
+    Args:
+        args: Command line arguments
+        epoch_num: Specific epoch number to load
+    """
     def signal_handler(sig, frame):
         logging.info("Stopping early...")
         sys.exit(0)
 
-    args = build_args()
     specs = json.load(open(args.specifications))
     sub_obj_name = args.object_name.split("_full_l2")[0]
     obj_name = args.object_name
@@ -230,14 +297,15 @@ def load_model_latents():
         experiment_folder,
     )
 
-    # Build export path based on method
+    # Build export path based on method, including epoch subdirectory
     export_path = os.path.join(
         experiment_directory,
         "manifold",
+        f"epoch_{epoch_num}",
     )
 
     latent_size = specs["CodeLength"]
-    pts_name = args.epoch
+    pts_name = str(epoch_num)
 
     if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
         from networks.other_volocities import Decoder
@@ -258,13 +326,13 @@ def load_model_latents():
         load_model_parameters(experiment_directory, pts_name, decoder)
         load_latent_vectors(experiment_directory, pts_name, start_end_vecs)
         return (
-            args,
             sdf_dataset,
             decoder,
             start_end_vecs,
             start_idx,
             end_idx,
             export_path,
+            experiment_directory,
         )
     elif "woAdaptor" in args.methods:
         specs["NetworkArch"] = "multi_velocity_debug"
@@ -282,13 +350,13 @@ def load_model_latents():
         load_model_parameters(experiment_directory, pts_name, decoder)
         load_latent_vectors(experiment_directory, pts_name, start_end_vecs)
         return (
-            args,
             sdf_dataset,
             decoder,
             start_end_vecs,
             start_idx,
             end_idx,
             export_path,
+            experiment_directory,
         )
     else:
         specs["NetworkArch"] = "multi_velocity_debug"
@@ -320,7 +388,6 @@ def load_model_latents():
         ajust = composed_model[0].eval()
         decoder = composed_model[1].eval()
         return (
-            args,
             sdf_dataset,
             decoder,
             ajust,
@@ -328,6 +395,7 @@ def load_model_latents():
             start_idx,
             end_idx,
             export_path,
+            experiment_directory,
         )
 
 
@@ -440,41 +508,103 @@ if __name__ == "__main__":
     # python eval_sphere.py -o grizzRSS_Attack0  -d animals
     setup_seed(3407)
     args = build_args()
-    if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
-        args, sdf_dataset, decoder, start_end_vecs, start_idx, end_idx, export_path = (
-            load_model_latents()
+
+    # First, we need to get the experiment directory to find available epochs
+    # We'll do a quick setup to get the experiment directory path
+    specs = json.load(open(args.specifications))
+
+    if args.dataset_name == "animals":
+        sub_obj_name = args.object_name.split("_full_l2")[0]
+        obj_name = args.object_name
+    elif args.dataset_name == "defaust":
+        obj_name = (
+            args.object_name + "_S3_full_l2_0.25_elas_20.0_prob_0.12"
         )
+        sub_obj_name = args.object_name
+    elif args.dataset_name == "medical":
+        obj_name = (
+            args.object_name + "_M1_full_l2_0.25_elas_10.0_prob_0.18"
+        )
+        sub_obj_name = args.object_name
+    elif args.dataset_name == "pheno4d":
+        if args.experiment_name:
+            obj_name = args.experiment_name.split("/")[-1]
+            object_base_name = args.object_name.split("/")[-1]
+            sub_obj_name = object_base_name
+        else:
+            raise ValueError(
+                "For pheno4d dataset, --experiment_name argument is required"
+            )
     else:
-        (
-            args,
-            sdf_dataset,
-            decoder,
-            ajust,
-            adjust_start_end_vecs,
-            start_idx,
-            end_idx,
-            export_path,
-        ) = load_model_latents()
-
-    if args.step == "1":
-        # Ensure the export directory exists before creating the template
-        os.makedirs(export_path, mode=0o777, exist_ok=True)
-        creat_colored_canonic_mesh(
-            decoder, sdf_dataset, start_idx, end_idx, export_path
+        raise ValueError(
+            f"The variable must be in either animals, medical, defaust, or pheno4d"
         )
 
-    start_time = (sdf_dataset[start_idx])["normed_time"].cuda()
-    end_time = (sdf_dataset[end_idx])["normed_time"].cuda()
+    # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
+    if args.dataset_name == "pheno4d" and args.experiment_name:
+        experiment_folder = args.experiment_name.split("/")[-1]
+        object_base_name = args.object_name.split("/")[-1]
+    else:
+        experiment_folder = obj_name
+        object_base_name = sub_obj_name
 
-    decoder.warper.split_time(start_time, end_time)
-    gt_time = 0.5 * (start_time + end_time)
-    if args.step == "2":
-        move_canonic_shape(
-            args.methods,
-            sdf_dataset,
-            decoder,
-            start_time,
-            end_time,
-            gt_time,
-            export_path,
-        )
+    # Build experiment directory path
+    experiment_directory = os.path.join(
+        args.base_results_dir,
+        args.dataset_name,
+        object_base_name,
+        args.methods,
+        experiment_folder,
+    )
+
+    # Get list of epochs to evaluate
+    epochs_to_evaluate = select_epochs_to_evaluate(args.epoch, experiment_directory)
+    print(f"Evaluating {len(epochs_to_evaluate)} checkpoint(s): {epochs_to_evaluate}")
+
+    # Loop through each epoch
+    for epoch_num in epochs_to_evaluate:
+        print(f"\n{'='*80}")
+        print(f"Evaluating epoch {epoch_num}")
+        print(f"{'='*80}\n")
+
+        if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
+            sdf_dataset, decoder, start_end_vecs, start_idx, end_idx, export_path, exp_dir = (
+                load_model_latents(args, epoch_num)
+            )
+        else:
+            (
+                sdf_dataset,
+                decoder,
+                ajust,
+                adjust_start_end_vecs,
+                start_idx,
+                end_idx,
+                export_path,
+                exp_dir,
+            ) = load_model_latents(args, epoch_num)
+
+        if args.step == "1":
+            # Ensure the export directory exists before creating the template
+            os.makedirs(export_path, mode=0o777, exist_ok=True)
+            creat_colored_canonic_mesh(
+                decoder, sdf_dataset, start_idx, end_idx, export_path
+            )
+
+        start_time = (sdf_dataset[start_idx])["normed_time"].cuda()
+        end_time = (sdf_dataset[end_idx])["normed_time"].cuda()
+
+        decoder.warper.split_time(start_time, end_time)
+        gt_time = 0.5 * (start_time + end_time)
+        if args.step == "2":
+            move_canonic_shape(
+                args.methods,
+                sdf_dataset,
+                decoder,
+                start_time,
+                end_time,
+                gt_time,
+                export_path,
+            )
+
+        print(f"\nCompleted evaluation for epoch {epoch_num}")
+        print(f"Results saved to: {export_path}\n")
