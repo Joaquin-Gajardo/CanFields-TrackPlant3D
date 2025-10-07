@@ -158,7 +158,7 @@ def velocity_test():
             start_idx,
             end_idx,
             ajust_coes,
-            obj_name,
+            timestamped_obj_name,
             experiment_directory,
         )
     else:
@@ -170,7 +170,7 @@ def velocity_test():
             start_end_vecs,
             start_idx,
             end_idx,
-            obj_name,
+            timestamped_obj_name,
             experiment_directory,
         )
 
