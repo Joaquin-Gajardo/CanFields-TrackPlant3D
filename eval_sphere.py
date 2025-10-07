@@ -207,15 +207,27 @@ def load_model_latents():
     end_idx = len(sdf_dataset) - 1
 
     ### Set paths ###
+    # Extract object name from object_name path for directory structure
+    # For pheno4d: datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -> tomato2_control_plant2_leaf1
+    # For others: object_name is already the base name
+    if args.dataset_name == "pheno4d":
+        object_base_name = args.object_name.split("/")[-1]
+    else:
+        object_base_name = sub_obj_name
+
     # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
     if args.dataset_name == "pheno4d" and args.experiment_name:
         experiment_folder = args.experiment_name
     else:
         experiment_folder = obj_name
 
-    # Build experiment directory path: results/{dataset}/{method}/{experiment_name}/
+    # Build experiment directory path: results/{dataset}/{object}/{method}/{experiment_name}/
     experiment_directory = os.path.join(
-        args.base_results_dir, args.dataset_name, args.methods, experiment_folder
+        args.base_results_dir,
+        args.dataset_name,
+        object_base_name,
+        args.methods,
+        experiment_folder,
     )
 
     # Build export path based on method
@@ -388,9 +400,7 @@ def move_canonic_shape(
             )
             this_idx = this_idx + 1
     else:
-        templat_full_path = os.path.join(
-            export_path, "normalized_tempt.ply"
-        )
+        templat_full_path = os.path.join(export_path, "normalized_tempt.ply")
 
         temp_mesh = trimesh.load(templat_full_path)
         temp_v = np.asarray(temp_mesh.vertices, dtype=np.float32)
@@ -430,7 +440,7 @@ if __name__ == "__main__":
     # python eval_sphere.py -o grizzRSS_Attack0  -d animals
     setup_seed(3407)
     args = build_args()
-    if args.methods != None or "woAdaptor" in args.object_name:
+    if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
         args, sdf_dataset, decoder, start_end_vecs, start_idx, end_idx, export_path = (
             load_model_latents()
         )

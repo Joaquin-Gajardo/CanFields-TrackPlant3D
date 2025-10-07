@@ -33,7 +33,7 @@ def reply_temp_time(src_time):
     return random.choice(mylist)
 
 
-def wandb_name_init(debug=False, obj_name=None, dataset_name=None, wandb_dir=None, config=None, timestamp=None):
+def wandb_name_init(debug=False, wandb_dir=None, config=None, timestamp=None):
     if wandb_dir is None:
         wandb_dir = "exp_res/wandb"
 
@@ -42,8 +42,12 @@ def wandb_name_init(debug=False, obj_name=None, dataset_name=None, wandb_dir=Non
 
     if debug:
         wandb.init(
-            project="CanFields", name=wandb_name, dir=wandb_dir, mode="disabled", config=config
-        )  # mode="disabled"
+            project="CanFields",
+            name=wandb_name,
+            dir=wandb_dir,
+            mode="disabled",
+            config=config,
+        )
     else:
         wandb.init(project="CanFields", name=wandb_name, dir=wandb_dir, config=config)
     return wandb  # ,wandb_name
@@ -57,7 +61,10 @@ class LearningRateSchedule:
 def load_model_parameters(experiment_directory, checkpoint, decoder):
 
     filename = os.path.join(
-        experiment_directory, model_params_subdir, checkpoint + ".pth"
+        experiment_directory,
+        checkpoint_subdir,
+        model_params_subdir,
+        checkpoint + ".pth",
     )
 
     if not os.path.isfile(filename):

@@ -74,17 +74,26 @@ def velocity_test():
     ############### Logging and Wandb ########################
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Build new path structure: results/{dataset}/{method}/{timestamp}_{obj_name}/
-    timestamped_obj_name = f"{timestamp}_{obj_name}"
+    # Extract object name from object_name path for directory structure
+    # For pheno4d: datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -> tomato2_control_plant2_leaf1
+    # For others: object_name is already the base name
+    object_name = args.object_name.split("/")[-1]
+
+    # Build new path structure: results/{dataset}/{object}/{method}/{timestamp}_{experiment_name}/
+    timestamped_exp_name = f"{timestamp}_{obj_name}"
     experiment_directory = os.path.join(
-        args.base_results_dir, args.dataset_name, args.methods, timestamped_obj_name
+        args.base_results_dir,
+        args.dataset_name,
+        object_name,
+        args.methods,
+        timestamped_exp_name,
     )
     os.makedirs(experiment_directory, exist_ok=True)
 
     # Prepare config for wandb
     wandb_config = {
         "dataset_name": args.dataset_name,
-        "object_name": args.object_name,
+        "object_name": object_name,
         "obj_name": obj_name,
         "methods": args.methods,
         "adjust_use": args.adjust_use,
@@ -98,8 +107,6 @@ def velocity_test():
 
     wandb = wandb_name_init(
         debug=False,
-        obj_name=args.object_name,
-        dataset_name=args.dataset_name,
         wandb_dir=experiment_directory,
         config=wandb_config,
         timestamp=timestamp,
@@ -155,7 +162,7 @@ def velocity_test():
             start_idx,
             end_idx,
             ajust_coes,
-            timestamped_obj_name,
+            timestamped_exp_name,
             experiment_directory,
         )
     else:
@@ -167,7 +174,7 @@ def velocity_test():
             start_end_vecs,
             start_idx,
             end_idx,
-            timestamped_obj_name,
+            timestamped_exp_name,
             experiment_directory,
         )
 
@@ -182,7 +189,7 @@ def velocity_test():
             mean_time = np.array(times).mean()
             logging.info("computed_time_per100 = {}".format(100 * mean_time))
             times = []
-        if epoch % 2000 == 0:  # 200
+        if epoch % 200 == 0:  # 200
             trainer.save_model(epoch, experiment_directory)
 
 
