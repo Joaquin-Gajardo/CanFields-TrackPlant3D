@@ -170,7 +170,7 @@ def load_model_latents():
 
         # For Pheno4D, use the experiment_name argument
         if args.experiment_name:
-            obj_name = args.experiment_name
+            obj_name = args.experiment_name.split("/")[-1]
         else:
             raise ValueError(
                 "For pheno4d dataset, --experiment_name argument is required"
@@ -217,7 +217,7 @@ def load_model_latents():
 
     # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
     if args.dataset_name == "pheno4d" and args.experiment_name:
-        experiment_folder = args.experiment_name
+        experiment_folder = args.experiment_name.split("/")[-1]
     else:
         experiment_folder = obj_name
 

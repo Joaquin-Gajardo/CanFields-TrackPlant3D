@@ -370,6 +370,14 @@ def create_animation(args):
         if hasattr(temp_mesh.visual, "face_colors"):
             warped_mesh.visual.face_colors = temp_mesh.visual.face_colors
 
+        # Print mesh statistics
+        bbox_size = warped_mesh.bounds[1] - warped_mesh.bounds[0]
+        bbox_volume = np.prod(bbox_size)
+        num_vertices = len(warped_mesh.vertices)
+        print(f"  Bounding box size: {bbox_size}")
+        print(f"  Bounding box volume: {bbox_volume:.2f}")
+        print(f"  Number of vertices: {num_vertices}")
+
         # Render frame
         frame_img, vis = render_mesh_frame(
             warped_mesh,

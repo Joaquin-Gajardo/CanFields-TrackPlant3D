@@ -189,7 +189,7 @@ def velocity_test():
             mean_time = np.array(times).mean()
             logging.info("computed_time_per100 = {}".format(100 * mean_time))
             times = []
-        if epoch % 200 == 0:  # 200
+        if epoch % 2000 == 0 or epoch == num_epochs:  # 200
             trainer.save_model(epoch, experiment_directory)
 
 
