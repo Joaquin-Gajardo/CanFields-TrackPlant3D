@@ -34,7 +34,7 @@ def velocity_test():
         logging.info("Stopping early...")
         sys.exit(0)
 
-    logging.debug("running " + args.experiment_directory)
+    logging.debug("running " + args.base_results_dir)
     signal.signal(signal.SIGINT, signal_handler)
     if not os.path.isfile(args.specifications):
         raise Exception("The experiment directory does not include such files")
@@ -67,22 +67,19 @@ def velocity_test():
             float(ajust_weights[1]),
             float(ajust_weights[2]),
         ]
-        sdf_dataset, experiment_directory, obj_name = load_dataset(
-            args, specs, ajust_coes
-        )
+        sdf_dataset, obj_name = load_dataset(args, specs, ajust_coes)
     else:
-        sdf_dataset, experiment_directory, obj_name = load_dataset(args, specs)
+        sdf_dataset, obj_name = load_dataset(args, specs)
 
     ############### Logging and Wandb ########################
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Add timestamp to obj_name and rebuild experiment_directory
+    # Build new path structure: results/{dataset}/{method}/{timestamp}_{obj_name}/
     timestamped_obj_name = f"{timestamp}_{obj_name}"
-    experiment_directory = os.path.join(args.experiment_directory, timestamped_obj_name)
-
-    # Create wandb logging directory
-    exp_dir = f"results/{args.dataset_name}/{timestamped_obj_name}"
-    os.makedirs(exp_dir, exist_ok=True)
+    experiment_directory = os.path.join(
+        args.base_results_dir, args.dataset_name, args.methods, timestamped_obj_name
+    )
+    os.makedirs(experiment_directory, exist_ok=True)
 
     # Prepare config for wandb
     wandb_config = {
@@ -103,7 +100,7 @@ def velocity_test():
         debug=False,
         obj_name=args.object_name,
         dataset_name=args.dataset_name,
-        wandb_dir=exp_dir,
+        wandb_dir=experiment_directory,
         config=wandb_config,
         timestamp=timestamp,
     )

@@ -33,21 +33,19 @@ def build_args():
         + "files to use for reconstruction",
     )
     arg_parser.add_argument(
-        "--experiment",
-        default="exp_res/formulation/ode_solve",
-        dest="experiment_directory",
+        "--base_results_dir",
+        default="results",
         required=False,
-        help="The experiment directory which includes specifications and saved model "
-        + "files to use for reconstruction",
+        help="The base results directory",
     )
 
     arg_parser.add_argument(
         "--methods",
         "-me",
-        default=None,
+        default="ode_solve",
         dest="methods",
         required=False,
-        help="use other methods: 4DDeepSDF,TPSR,NVFI,OF4D",
+        help="method name (default: ode_solve). Other options: 4DSDF,TPSR,NVFI,4DGF, ode_solve_woAdaptor",
     )
     arg_parser.add_argument(
         "--object_name",
@@ -95,10 +93,13 @@ def build_args():
 
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
-    if args.methods != None:
+
+    # Use different specs for non-ode_solve methods
+    if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
         args.specifications = (args.specifications).replace(
             "specs.json", "others_specs.json"
         )
+
     configure_logging(args)
     return args
 
@@ -127,42 +128,13 @@ def load_model_latents():
     sub_obj_name = args.object_name.split("_full_l2")[0]
     obj_name = args.object_name
 
-    # Create results folder structure with experiment name
-    base_results_path = f"results/{args.dataset_name}"
-
-    # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
-    if args.dataset_name == "pheno4d" and args.experiment_name:
-        experiment_folder = args.experiment_name
-    else:
-        experiment_folder = obj_name
-
-    if args.methods != None:
-        args.experiment_directory = (args.experiment_directory).replace(
-            "ode_solve", args.methods
-        )
-        export_path = os.path.join(
-            base_results_path, experiment_folder, args.methods + "_manifold"
-        )
-    elif "woAdaptor" in obj_name:
-        args.experiment_directory = (args.experiment_directory).replace(
-            "ode_solve", "woAdaptor"
-        )
-        export_path = os.path.join(
-            base_results_path, experiment_folder, "woAdaptor_manifold"
-        )
-    else:
-        export_path = os.path.join(base_results_path, experiment_folder, "manifold")
-
-    # Ensure the export path ends with a slash
-    export_path = export_path + "/"
-
     if args.dataset_name == "animals":
 
         from datasets import data_wmw
 
         anima_path = "datasets/Deforming4D/notexture/"
         specs["ShapePath"] = anima_path + sub_obj_name
-        if args.methods != None or "_woAdaptor" in obj_name:
+        if args.methods != "ode_solve" or "_woAdaptor" in obj_name:
             gap_lenth = int(obj_name.split("_")[-4])
             start_idx = int(obj_name.split("_")[-6])
             stride = int(obj_name.split("_")[-2])
@@ -234,11 +206,28 @@ def load_model_latents():
     start_idx = 0
     end_idx = len(sdf_dataset) - 1
 
-    experiment_directory = os.path.join(args.experiment_directory, obj_name)
+    ### Set paths ###
+    # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
+    if args.dataset_name == "pheno4d" and args.experiment_name:
+        experiment_folder = args.experiment_name
+    else:
+        experiment_folder = obj_name
+
+    # Build experiment directory path: results/{dataset}/{method}/{experiment_name}/
+    experiment_directory = os.path.join(
+        args.base_results_dir, args.dataset_name, args.methods, experiment_folder
+    )
+
+    # Build export path based on method
+    export_path = os.path.join(
+        experiment_directory,
+        "manifold",
+    )
+
     latent_size = specs["CodeLength"]
     pts_name = args.epoch
 
-    if args.methods != None:
+    if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
         from networks.other_volocities import Decoder
 
         decoder = Decoder(
@@ -265,7 +254,7 @@ def load_model_latents():
             end_idx,
             export_path,
         )
-    elif "woAdaptor" in args.object_name:
+    elif "woAdaptor" in args.methods:
         specs["NetworkArch"] = "multi_velocity_debug"
         arch = __import__("networks." + specs["NetworkArch"], fromlist=["Warper"])
 
@@ -343,7 +332,7 @@ def creat_colored_canonic_mesh(decoder, sdf_dataset, start_idx, end_idx, export_
     create_mesh_colored_wmw(
         decoder,
         None,
-        os.path.join(export_path.rstrip("/"), "normalized_tempt"),
+        os.path.join(export_path, "normalized_tempt"),
         N=200,
         sm_offset=min_swbbox[0],
         sm_len=2 * 1.7 * swbbox_len,
@@ -384,7 +373,7 @@ def move_canonic_shape(
             swbbox_len = torch.abs(sw_bbox_max - swbbox_middle)
             min_swbbox = swbbox_middle - 1.7 * swbbox_len
             # inter_latent = None
-            mesh_path = export_path + str(back_time.cpu().item())
+            mesh_path = os.path.join(export_path, str(back_time.cpu().item()))
             print("mesh_path: ", mesh_path)
             create_mesh_colored_wmw(
                 decoder,
@@ -400,7 +389,7 @@ def move_canonic_shape(
             this_idx = this_idx + 1
     else:
         templat_full_path = os.path.join(
-            export_path.rstrip("/"), "normalized_tempt.ply"
+            export_path, "normalized_tempt.ply"
         )
 
         temp_mesh = trimesh.load(templat_full_path)
@@ -424,9 +413,9 @@ def move_canonic_shape(
                 v_final.append(chunk_final)
             v_final = torch.cat(v_final, dim=0) / d_s.cuda() + d_m.cuda()
             if methods == "4DSDF":
-                mesh_path = export_path + str(back_time.cpu().item())
+                mesh_path = os.path.join(export_path, str(back_time.cpu().item()))
             else:
-                mesh_path = export_path + "/" + sub_file
+                mesh_path = os.path.join(export_path, sub_file)
 
             print("mesh_path: ", mesh_path)
             new_mesh = trimesh.Trimesh(

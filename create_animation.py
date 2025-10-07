@@ -28,19 +28,19 @@ def build_args():
         help="The experiment directory with specifications",
     )
     arg_parser.add_argument(
-        "--experiment",
-        default="exp_res/formulation/ode_solve",
+        "--base_results_dir",
+        default="results",
         dest="experiment_directory",
         required=False,
-        help="The experiment directory",
+        help="The base results directory",
     )
     arg_parser.add_argument(
         "--methods",
         "-me",
-        default=None,
+        default="ode_solve",
         dest="methods",
         required=False,
-        help="use other methods: 4DDeepSDF,TPSR,NVFI,OF4D",
+        help="method name (default: ode_solve). Other options: 4DSDF,TPSR,NVFI,4DGF, ode_solve_woAdaptor",
     )
     arg_parser.add_argument(
         "--object_name",
@@ -247,7 +247,7 @@ def create_animation(args):
 
     # Load model and data
     print("Loading model and data...")
-    if args.methods is not None or "woAdaptor" in args.object_name:
+    if args.methods != "ode_solve" or "woAdaptor" in args.object_name:
         (
             args_loaded,
             sdf_dataset,
@@ -278,7 +278,7 @@ def create_animation(args):
             setattr(args, key, value)
 
     # Check if template mesh exists
-    templat_full_path = os.path.join(export_path.rstrip("/"), "normalized_tempt.ply")
+    templat_full_path = os.path.join(export_path, "normalized_tempt.ply")
     if not os.path.exists(templat_full_path):
         print(f"Template mesh not found at {templat_full_path}")
         print("Please run: python eval_sphere.py -s 1 [other args] first")

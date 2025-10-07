@@ -53,10 +53,10 @@ def build_args():
     arg_parser.add_argument(
         "--methods",
         "-me",
-        default=None,
+        default="ode_solve",
         dest="methods",
         required=False,
-        help="use other methods: 4DDeepSDF,TPSR,NVFI,OF4D",
+        help="method name (default: ode_solve). Other options: 4DSDF,TPSR,NVFI,4DGF",
     )
     arg_parser.add_argument(
         "--multi_ode",
@@ -73,12 +73,10 @@ def build_args():
         help="clip raw dataset with start_idx,gap,stride",
     )
     arg_parser.add_argument(
-        "--experiment",
-        default="exp_res/formulation/ode_solve",
-        dest="experiment_directory",
+        "--base_results_dir",
+        default="results",
         required=False,
-        help="The experiment directory which includes specifications and saved model "
-        + "files to use for reconstruction",
+        help="The base results directory",
     )
     arg_parser.add_argument(
         "--dataset_name",
@@ -104,7 +102,13 @@ def build_args():
     )
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
-    if args.methods != None:
+
+    # Adjust method name if not using adaptor
+    if args.adjust_use == "False":
+        args.methods = f"{args.methods}_woAdaptor"
+
+    # Use different specs for non-ode_solve methods
+    if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
         args.specifications = (args.specifications).replace(
             "specs.json", "others_specs.json"
         )
@@ -355,20 +359,7 @@ def load_dataset(args, specs, ajust_coes=None):
             + str(stride)
         )
 
-    # modify experiment_directory from args to others
-    if args.methods != None:
-        obj_name = obj_name + "_" + args.methods
-        args.experiment_directory = (args.experiment_directory).replace(
-            "ode_solve", args.methods
-        )
-    if args.adjust_use == "False" and args.methods == None:
-        obj_name = obj_name + "_" + "woAdaptor"
-        args.experiment_directory = (args.experiment_directory).replace(
-            "ode_solve", "woAdaptor"
-        )
-        print("args.experiment_directory: ", args.experiment_directory)
-    experiment_directory = os.path.join(args.experiment_directory, obj_name)
-    return sdf_dataset, experiment_directory, obj_name
+    return sdf_dataset, obj_name
 
 
 def get_lr(adjust_use, specs, decoders, three_latents):
@@ -863,14 +854,14 @@ class Trainer:
         # compute the half length of diagonal bbox
         swbbox_len = torch.abs(sw_bbox_max - swbbox_middle)
         min_swbbox = swbbox_middle - 1.7 * swbbox_len
-        save_path = "results/" + self.obj_name + "/"
+        save_path = os.path.join(self.experiment_directory, "meshes")
         os.makedirs(save_path, exist_ok=True)
-        save_mesh_path = (
-            save_path
-            + self.obj_name
+        save_mesh_path = os.path.join(
+            save_path,
+            self.obj_name
             + str(epoch)
             + "BestMiddle"
-            + "use_adaptor_Finally_start_OLdODE"
+            + "use_adaptor_Finally_start_OLdODE",
         )
         create_mesh_wmw(
             self.decoder.sdf_decoder,
@@ -1215,7 +1206,9 @@ class Trainer_woadjust:
         swbbox_len = torch.abs(sw_bbox_max - swbbox_middle)
         min_swbbox = swbbox_middle - 1.7 * swbbox_len
         # sub_path= str(l2_c)+"_"+str(elas_c)+"_"+str(prob_c)+"_"
-        save_mesh_path = "results/" + self.obj_name + str(epoch)
+        save_path = os.path.join(self.experiment_directory, "meshes")
+        os.makedirs(save_path, exist_ok=True)
+        save_mesh_path = os.path.join(save_path, self.obj_name + str(epoch))
         if self.args.methods == "4DSDF":
             create_mesh_wmw(
                 self.decoder.sdf_decoder,
