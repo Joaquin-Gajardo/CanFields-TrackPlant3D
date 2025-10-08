@@ -12,7 +12,11 @@ import trimesh
 from matplotlib import cm
 from tqdm import tqdm
 
-from eval_sphere import load_model_latents
+from eval_sphere import (
+    get_available_checkpoints,
+    load_model_latents,
+    select_epochs_to_evaluate,
+)
 from utils import setup_seed
 
 
@@ -68,7 +72,7 @@ def build_args():
         "-e",
         dest="epoch",
         required=True,
-        help="Epoch number: 15000 or 20000",
+        help="Checkpoint selection: 'all' for all checkpoints, 'last' for most recent, or specific epoch number (e.g., 15000)",
     )
     arg_parser.add_argument(
         "--step",
@@ -242,11 +246,11 @@ def render_mesh_frame(
     return image, vis
 
 
-def create_animation(args):
-    """Create animation video from temporal reconstruction."""
+def create_animation(args, epoch_num):
+    """Create animation video from temporal reconstruction for a specific epoch."""
 
     # Load model and data
-    print("Loading model and data...")
+    print(f"Loading model and data for epoch {epoch_num}...")
     if args.methods != "ode_solve" or "woAdaptor" in args.object_name:
         (
             args_loaded,
@@ -256,7 +260,7 @@ def create_animation(args):
             start_idx,
             end_idx,
             export_path,
-        ) = load_model_latents()
+        ) = load_model_latents(args, epoch_num)
         ajust = None
         adjust_start_end_vecs = None
     else:
@@ -269,7 +273,7 @@ def create_animation(args):
             start_idx,
             end_idx,
             export_path,
-        ) = load_model_latents()
+        ) = load_model_latents(args, epoch_num)
         start_end_vecs = None
 
     # Update args with loaded values
@@ -332,13 +336,21 @@ def create_animation(args):
     d_s = sdf_dataset.scale
     d_m = sdf_dataset.mean
 
-    # Create output directory for frames (clear old frames if they exist)
-    frames_dir = os.path.join(export_path, "animation_frames")
-    if os.path.exists(frames_dir):
-        # Clear old frames
+    # Create output directory for animations under experiment_directory
+    reverse_suffix = "_reversed" if args.reverse else ""
+    animations_dir = os.path.join(
+        export_path,
+        "..",
+        "animations",
+        f"epoch_{epoch_num}_{args.step}steps_{args.fps}fps{reverse_suffix}",
+    )
+    frames_dir = os.path.join(animations_dir, "frames")
+
+    if os.path.exists(animations_dir):
+        # Clear old animation
         import shutil
 
-        shutil.rmtree(frames_dir)
+        shutil.rmtree(animations_dir)
     os.makedirs(frames_dir, exist_ok=True)
 
     # Calculate rotation angles
@@ -419,7 +431,7 @@ def create_animation(args):
         vis.destroy_window()
 
     # Create video using ffmpeg
-    video_path = os.path.join(export_path, "animation.mp4")
+    video_path = os.path.join(animations_dir, "animation.mp4")
     print(f"\nCreating video at {video_path}...")
 
     ffmpeg_cmd = [
@@ -455,6 +467,9 @@ if __name__ == "__main__":
     # Import necessary args parsing from eval_sphere
     import sys
 
+    # First, we need to determine the experiment directory to get available checkpoints
+    from eval_sphere import build_args as eval_build_args
+
     sys.argv = [sys.argv[0]]  # Reset argv for eval_sphere's build_args
 
     # Reconstruct command line args for eval_sphere compatibility
@@ -462,7 +477,9 @@ if __name__ == "__main__":
         "--dataset_name",
         args.dataset_name,
         "--epoch",
-        args.epoch,
+        (
+            args.epoch if args.epoch.lower() not in ["all", "last"] else "1"
+        ),  # Dummy epoch for arg parsing
         "--step",
         args.step,
         "--multi_step",
@@ -478,4 +495,64 @@ if __name__ == "__main__":
 
     sys.argv.extend(cmd_args)
 
-    video_path = create_animation(args)
+    # Get experiment directory to find available checkpoints
+    eval_args = eval_build_args()
+
+    # Build experiment directory path
+    import json
+
+    specs = json.load(open(eval_args.specifications))
+    obj_name = eval_args.object_name.split("/")[-1] if eval_args.object_name else ""
+    experiment_folder = eval_args.experiment_name.split("/")[-1]
+
+    experiment_path = os.path.join(
+        eval_args.base_results_dir,
+        eval_args.dataset_name,
+        obj_name,
+        eval_args.methods,
+        experiment_folder,
+    )
+    # Get list of epochs to evaluate
+    epochs_to_evaluate = select_epochs_to_evaluate(args.epoch, experiment_path)
+
+    print(
+        f"Will create animations for {len(epochs_to_evaluate)} epoch(s): {epochs_to_evaluate}"
+    )
+
+    # Create animations for each epoch
+    for epoch_num in epochs_to_evaluate:
+        print(f"\n{'='*80}")
+        print(f"Creating animation for epoch {epoch_num}")
+        print(f"{'='*80}\n")
+
+        # Update args with current epoch
+        args.epoch = str(epoch_num)
+
+        # Reset sys.argv for this epoch
+        sys.argv = [sys.argv[0]]
+        cmd_args = [
+            "--dataset_name",
+            args.dataset_name,
+            "--epoch",
+            str(epoch_num),
+            "--step",
+            args.step,
+            "--multi_step",
+            args.multi_step,
+        ]
+
+        if args.object_name:
+            cmd_args.extend(["--object_name", args.object_name])
+        if args.experiment_name:
+            cmd_args.extend(["--experiment_name", args.experiment_name])
+        if args.methods:
+            cmd_args.extend(["--methods", args.methods])
+
+        sys.argv.extend(cmd_args)
+
+        video_path = create_animation(args, epoch_num)
+        print(f"Completed animation for epoch {epoch_num}: {video_path}")
+
+    print(f"\n{'='*80}")
+    print(f"All animations completed! Processed {len(epochs_to_evaluate)} epoch(s)")
+    print(f"{'='*80}")

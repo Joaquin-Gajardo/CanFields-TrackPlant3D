@@ -23,6 +23,13 @@ def build_args():
         help="Path to folder containing PLY files (e.g., results/experiment/manifold)",
     )
     arg_parser.add_argument(
+        "--epoch",
+        "-e",
+        dest="epoch",
+        required=True,
+        help="Epoch number for naming (e.g., 15000)",
+    )
+    arg_parser.add_argument(
         "--fps",
         dest="fps",
         type=int,
@@ -154,13 +161,16 @@ def create_animation_from_ply(args):
         ply_files = list(reversed(ply_files))
         print("\nREVERSED file order")
 
-    # Create output directory for frames
-    frames_dir = folder / "animation_frames_from_ply"
-    if frames_dir.exists():
-        import shutil
+    # Create output directory for animations
+    experiment_folder = folder.parent
+    reverse_suffix = "_reversed" if args.reverse else ""
+    animations_dir = experiment_folder / "animations" / f"epoch_{args.epoch}_from-ply_{args.fps}fps{reverse_suffix}"
+    frames_dir = animations_dir / "frames"
 
-        shutil.rmtree(frames_dir)
-    frames_dir.mkdir(exist_ok=True)
+    if animations_dir.exists():
+        import shutil
+        shutil.rmtree(animations_dir)
+    frames_dir.mkdir(parents=True, exist_ok=True)
 
     # Calculate rotation angles
     rotation_angles = np.linspace(0, 2 * np.pi * args.num_rotations, len(ply_files))
@@ -216,7 +226,7 @@ def create_animation_from_ply(args):
         vis.destroy_window()
 
     # Create video using ffmpeg
-    video_path = folder / "animation_from_ply.mp4"
+    video_path = animations_dir / "animation.mp4"
     print(f"\nCreating video at {video_path}...")
 
     ffmpeg_cmd = [
