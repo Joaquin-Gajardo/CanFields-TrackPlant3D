@@ -253,19 +253,18 @@ def create_animation(args, epoch_num):
     print(f"Loading model and data for epoch {epoch_num}...")
     if args.methods != "ode_solve" or "woAdaptor" in args.object_name:
         (
-            args_loaded,
             sdf_dataset,
             decoder,
             start_end_vecs,
             start_idx,
             end_idx,
             export_path,
+            experiment_directory,
         ) = load_model_latents(args, epoch_num)
         ajust = None
         adjust_start_end_vecs = None
     else:
         (
-            args_loaded,
             sdf_dataset,
             decoder,
             ajust,
@@ -273,13 +272,9 @@ def create_animation(args, epoch_num):
             start_idx,
             end_idx,
             export_path,
+            experiment_directory,
         ) = load_model_latents(args, epoch_num)
         start_end_vecs = None
-
-    # Update args with loaded values
-    for key, value in vars(args_loaded).items():
-        if not hasattr(args, key):
-            setattr(args, key, value)
 
     # Check if template mesh exists
     templat_full_path = os.path.join(export_path, "normalized_tempt.ply")
@@ -336,11 +331,12 @@ def create_animation(args, epoch_num):
     d_s = sdf_dataset.scale
     d_m = sdf_dataset.mean
 
-    # Create output directory for animations under experiment_directory
+    # Create output directory for animations at same level as manifold/
+    # export_path is: experiment_directory/manifold/epoch_{epoch_num}/
+    # We want: experiment_directory/animations/epoch_{epoch_num}_{step}steps_{fps}fps/
     reverse_suffix = "_reversed" if args.reverse else ""
     animations_dir = os.path.join(
-        export_path,
-        "..",
+        experiment_directory,
         "animations",
         f"epoch_{epoch_num}_{args.step}steps_{args.fps}fps{reverse_suffix}",
     )
@@ -498,6 +494,13 @@ if __name__ == "__main__":
     # Get experiment directory to find available checkpoints
     eval_args = eval_build_args()
 
+    # Merge animation-specific args into eval_args
+    eval_args.num_frames = args.num_frames
+    eval_args.fps = args.fps
+    eval_args.num_rotations = args.num_rotations
+    eval_args.resolution = args.resolution
+    eval_args.reverse = args.reverse
+
     # Build experiment directory path
     import json
 
@@ -512,7 +515,7 @@ if __name__ == "__main__":
         eval_args.methods,
         experiment_folder,
     )
-    # Get list of epochs to evaluate
+    # Get list of epochs to evaluate (use original args.epoch, not eval_args.epoch)
     epochs_to_evaluate = select_epochs_to_evaluate(args.epoch, experiment_path)
 
     print(
@@ -525,32 +528,7 @@ if __name__ == "__main__":
         print(f"Creating animation for epoch {epoch_num}")
         print(f"{'='*80}\n")
 
-        # Update args with current epoch
-        args.epoch = str(epoch_num)
-
-        # Reset sys.argv for this epoch
-        sys.argv = [sys.argv[0]]
-        cmd_args = [
-            "--dataset_name",
-            args.dataset_name,
-            "--epoch",
-            str(epoch_num),
-            "--step",
-            args.step,
-            "--multi_step",
-            args.multi_step,
-        ]
-
-        if args.object_name:
-            cmd_args.extend(["--object_name", args.object_name])
-        if args.experiment_name:
-            cmd_args.extend(["--experiment_name", args.experiment_name])
-        if args.methods:
-            cmd_args.extend(["--methods", args.methods])
-
-        sys.argv.extend(cmd_args)
-
-        video_path = create_animation(args, epoch_num)
+        video_path = create_animation(eval_args, epoch_num)
         print(f"Completed animation for epoch {epoch_num}: {video_path}")
 
     print(f"\n{'='*80}")
