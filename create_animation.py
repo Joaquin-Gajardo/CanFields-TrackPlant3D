@@ -128,6 +128,12 @@ def build_args():
         action="store_true",
         help="Reverse time direction (default: False, goes from early to late)",
     )
+    arg_parser.add_argument(
+        "--overwrite",
+        dest="overwrite",
+        action="store_true",
+        help="Overwrite existing animations (default: False, skip if exists)",
+    )
 
     args = arg_parser.parse_args()
     return args
@@ -500,6 +506,7 @@ if __name__ == "__main__":
     eval_args.num_rotations = args.num_rotations
     eval_args.resolution = args.resolution
     eval_args.reverse = args.reverse
+    eval_args.overwrite = args.overwrite
 
     # Build experiment directory path
     import json
@@ -523,14 +530,31 @@ if __name__ == "__main__":
     )
 
     # Create animations for each epoch
+    skipped_count = 0
     for epoch_num in epochs_to_evaluate:
         print(f"\n{'='*80}")
         print(f"Creating animation for epoch {epoch_num}")
         print(f"{'='*80}\n")
 
+        # Check if animation already exists
+        reverse_suffix = "_reversed" if eval_args.reverse else ""
+        animations_dir = os.path.join(
+            experiment_path,
+            "animations",
+            f"epoch_{epoch_num}_{eval_args.step}steps_{eval_args.fps}fps{reverse_suffix}",
+        )
+        video_path = os.path.join(animations_dir, "animation.mp4")
+
+        if os.path.exists(video_path) and not eval_args.overwrite:
+            print(f"Animation already exists at {video_path}")
+            print(f"Skipping epoch {epoch_num} (use --overwrite to regenerate)")
+            skipped_count += 1
+            continue
+
         video_path = create_animation(eval_args, epoch_num)
         print(f"Completed animation for epoch {epoch_num}: {video_path}")
 
     print(f"\n{'='*80}")
-    print(f"All animations completed! Processed {len(epochs_to_evaluate)} epoch(s)")
+    created_count = len(epochs_to_evaluate) - skipped_count
+    print(f"All animations completed! Created {created_count}, skipped {skipped_count} (total: {len(epochs_to_evaluate)} epoch(s))")
     print(f"{'='*80}")

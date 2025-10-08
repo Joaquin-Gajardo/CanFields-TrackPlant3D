@@ -90,6 +90,12 @@ def build_args():
         required=True,
         help="step_1 canonic shape step:2 move canonic shape",
     )
+    arg_parser.add_argument(
+        "--overwrite",
+        dest="overwrite",
+        action="store_true",
+        help="Overwrite existing PLY files (default: False, skip if exists)",
+    )
 
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
@@ -562,10 +568,35 @@ if __name__ == "__main__":
     print(f"Evaluating {len(epochs_to_evaluate)} checkpoint(s): {epochs_to_evaluate}")
 
     # Loop through each epoch
+    skipped_count = 0
     for epoch_num in epochs_to_evaluate:
         print(f"\n{'='*80}")
         print(f"Evaluating epoch {epoch_num}")
         print(f"{'='*80}\n")
+
+        # Check if PLY files already exist in this epoch directory
+        epoch_export_path = os.path.join(
+            experiment_directory,
+            "manifold",
+            f"epoch_{epoch_num}",
+        )
+
+        # Check for key files based on step
+        if args.step == "1":
+            key_file = os.path.join(epoch_export_path, "normalized_tempt.ply")
+        else:  # step == "2"
+            # Check if there are any numbered PLY files (e.g., 0.0.ply, 0.125.ply, etc.)
+            ply_files_exist = os.path.exists(epoch_export_path) and any(
+                f.endswith('.ply') and f != 'normalized_tempt.ply'
+                for f in os.listdir(epoch_export_path)
+            ) if os.path.exists(epoch_export_path) else False
+            key_file = epoch_export_path if ply_files_exist else None
+
+        if key_file and os.path.exists(key_file) and not args.overwrite:
+            print(f"PLY files already exist in {epoch_export_path}")
+            print(f"Skipping epoch {epoch_num} (use --overwrite to regenerate)")
+            skipped_count += 1
+            continue
 
         if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
             sdf_dataset, decoder, start_end_vecs, start_idx, end_idx, export_path, exp_dir = (
@@ -608,3 +639,8 @@ if __name__ == "__main__":
 
         print(f"\nCompleted evaluation for epoch {epoch_num}")
         print(f"Results saved to: {export_path}\n")
+
+    print(f"\n{'='*80}")
+    created_count = len(epochs_to_evaluate) - skipped_count
+    print(f"All evaluations completed! Created {created_count}, skipped {skipped_count} (total: {len(epochs_to_evaluate)} epoch(s))")
+    print(f"{'='*80}")
