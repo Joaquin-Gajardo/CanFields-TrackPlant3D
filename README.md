@@ -93,6 +93,12 @@ To train CanFields using sampled points from raw scans, execute:
 python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u True -m False -c 0,15,1 -ev 7000
 ```
 ### Pheno4D dataset
+
+First, install the following repository via pip to get the dataloaders (it will automatically download the dataset the first time you use it):
+```bash
+pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git
+```
+
 #### Leaf sequence
 ```bash
 # Train CanFields
