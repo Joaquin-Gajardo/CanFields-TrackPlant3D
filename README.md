@@ -138,7 +138,7 @@ python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/processed
 module purge
 conda activate canfields
 module load stack/2024-05 gcc/13.2.0 cuda/12.2.1 eth_proxy
-sbatch run_euler.sh tomato2_control_plant2
+sbatch run_euler.sh datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2
 ```
 
 ## Citation
