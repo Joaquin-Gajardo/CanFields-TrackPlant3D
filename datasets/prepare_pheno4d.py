@@ -140,14 +140,20 @@ def main():
     parser.add_argument(
         "--dataset-path",
         type=str,
-        default="datasets/Pheno4D/raw/v1",
-        help="Path to TrackPlant3D dataset (will auto-download if not found, default: datasets/Pheno4D/raw/v1)",
+        default="datasets/Pheno4D/raw",
+        help="Path to TrackPlant3D dataset (will auto-download if not found, default: datasets/Pheno4D/raw)",
+    )
+    parser.add_argument(
+        "--version",
+        type=str,
+        default="v1",
+        help="Dataset version to use (default: v1)",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="datasets/Pheno4D/processed/v1",
-        help="Output directory for CanFields-format sequences (default: datasets/Pheno4D/processed/v1)",
+        default="datasets/Pheno4D/processed",
+        help="Output directory for CanFields-format sequences (default: datasets/Pheno4D/processed)",
     )
     parser.add_argument(
         "--mode",
@@ -219,7 +225,7 @@ def main():
     print(f"Export sparse: {args.export_sparse}")
 
     dataset_path = Path(args.dataset_path)
-    base_output_dir = Path(args.output_dir)
+    base_output_dir = Path(args.output_dir) / args.version
 
     # Determine which datasets to load
     load_plant = args.mode in ["plant", "both"]
@@ -229,9 +235,12 @@ def main():
 
     # Load plant sequences if requested
     if load_plant:
-        print(f"\nLoading PlantSequencesDataset from {dataset_path}...")
+        print(
+            f"\nLoading PlantSequencesDataset from {dataset_path} (version: {args.version})..."
+        )
         plant_dataset = PlantSequencesDataset(
             dataset_path=dataset_path,
+            version=args.version,
             use_ply=True,
             alignment_method=None,
             auto_download=True,
@@ -254,16 +263,21 @@ def main():
 
     # Load leaf sequences if requested
     if load_leaf:
-        print(f"\nLoading LeafSequencesDataset from {dataset_path}...")
+        print(
+            f"\nLoading LeafSequencesDataset from {dataset_path} (version: {args.version})..."
+        )
         leaf_dataset = LeafSequencesDataset(
             dataset_path=dataset_path,
+            version=args.version,
             min_timepoints=args.min_timepoints,
             use_ply=True,
             alignment_method=None,
             estimate_normals=False,
             auto_download=True,
         )
-        print(f"✓ Loaded {len(leaf_dataset)} leaf sequences")
+        print(
+            f"✓ Loaded {len(leaf_dataset)} leaf sequences (with {args.min_timepoints}+ timepoints)"
+        )
 
         # Mark as leaf sequences
         for ts in leaf_dataset.leaf_timeseries:
@@ -367,7 +381,7 @@ def main():
     if example_crop.startswith("tomato"):
         example_crop = "tomato"
     print(
-        f'  python train.py --object_name "Pheno4D/processed/v1/{example_prefix}/{example_crop}/{example_seq}"'
+        f'  python train.py --object_name "Pheno4D/processed/{args.version}/{example_prefix}/{example_crop}/{example_seq}"'
     )
 
 

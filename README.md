@@ -100,8 +100,8 @@ This steps will automatically download the dataset and prepare the sequences for
 # 1. Install plant-shape-analysis package
 pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git
 
-# 2. Prepare dataset (default: saves both plants and organs sequences, sparse only)
-python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw/v1 --output-dir datasets/Pheno4D/processed/v1 # Defaults: --mode both --no-dense
+# 2. Prepare dataset (default: version 1, saves both plants and organs sequences, sparse only)
+python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw --output-dir datasets/Pheno4D/processed # Defaults: --version v1 --mode both --no-dense
 ```
 
 ```bash
