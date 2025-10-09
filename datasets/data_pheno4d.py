@@ -94,10 +94,32 @@ class DeformSamples(torch.utils.data.Dataset):
             full_name = os.path.join(pc_path, sub_file)
 
             try:
-                v, _, n = pcu.load_mesh_vfn(full_name, dtype=np.float32)
+                # Try loading with Open3D tensor to get scalar fields
+                pcd_tensor = o3d.t.io.read_point_cloud(full_name)
+                v = pcd_tensor.point.positions.numpy().astype(np.float32)
+
+                # Read leaf tips if available
+                leaf_tip_mask = None
+                if "is_leaf_tip" in pcd_tensor.point:
+                    leaf_tip_mask = (
+                        pcd_tensor.point.is_leaf_tip.numpy().flatten().astype(bool)
+                    )
+
+                # Read normals if available
+                n = None
+                if "normals" in pcd_tensor.point:
+                    n = pcd_tensor.point.normals.numpy().astype(np.float32)
+
+                # # Old with PCU
+                # v, _, n = pcu.load_mesh_vfn(full_name, dtype=np.float32)
+                # leaf_tip_mask = None
 
                 # Deduplicate points
                 v, idx, _ = pcu.deduplicate_point_cloud(v, 1e-15, return_index=True)
+
+                # Update leaf tip mask after deduplication
+                if leaf_tip_mask is not None:
+                    leaf_tip_mask = leaf_tip_mask[idx]
 
                 # Handle case where normals are not available
                 if n is not None:
@@ -108,6 +130,10 @@ class DeformSamples(torch.utils.data.Dataset):
                     x = v[mask].astype(np.float32)
                     n = n[mask].astype(np.float32)
                     n /= np.linalg.norm(n, axis=-1, keepdims=True)
+
+                    # Update leaf tip mask after normal filtering
+                    if leaf_tip_mask is not None:
+                        leaf_tip_mask = leaf_tip_mask[mask]
                 else:
                     # No normals available, use all points and estimate normals with Open3D
                     x = v.astype(np.float32)
@@ -125,6 +151,20 @@ class DeformSamples(torch.utils.data.Dataset):
 
                 self.train_xx.append(torch.tensor(x))
                 self.train_nn.append(torch.tensor(n))
+
+                # Store leaf tip indices if available
+                if leaf_tip_mask is not None:
+                    leaf_tip_idxs = torch.tensor(
+                        np.where(leaf_tip_mask)[0], dtype=torch.long
+                    )
+                else:
+                    leaf_tip_idxs = torch.tensor([], dtype=torch.long)
+
+                # Store leaf tips - will be used for EPE evaluation
+                if not hasattr(self, "leaf_tips"):
+                    self.leaf_tips = []
+                self.leaf_tips.append(leaf_tip_idxs)
+
                 train_lens += 1
 
             except Exception as e:
@@ -156,6 +196,12 @@ class DeformSamples(torch.utils.data.Dataset):
     def evaluate_train(self, idx):
         pts = self.train_xx[idx]
         return pts
+
+    def get_leaf_tips(self, idx):
+        """Get leaf tip indices for a specific timestep."""
+        if hasattr(self, "leaf_tips") and idx < len(self.leaf_tips):
+            return self.leaf_tips[idx]
+        return torch.tensor([], dtype=torch.long)
 
     def __getitem__(self, idx):
         pts = self.train_xx[idx]

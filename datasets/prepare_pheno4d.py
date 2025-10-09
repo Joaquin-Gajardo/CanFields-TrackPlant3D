@@ -20,34 +20,58 @@ def export_timepoint(
     points: np.ndarray,
     output_path: Path,
     estimate_normals: bool = True,
+    labels: np.ndarray = None,
+    leaf_tip_idxs: np.ndarray = None,
+    include_leaf_tips: bool = True,
 ):
     """
-    Export a single timepoint as PLY file.
+    Export a single timepoint as PLY file with optional labels and leaf tips.
 
     Args:
         points: Point cloud array (N, 3) or (N, 6) with normals
         output_path: Output file path
         estimate_normals: If True, estimate normals with Open3D
+        labels: (N,) array of organ instance labels (optional)
+        leaf_tip_idxs: array of indices marking leaf tips (optional)
+        include_leaf_tips: Whether to include is_leaf_tip scalar field (only for sparse GT)
     """
     if points is None or len(points) == 0:
         return False
 
-    # Create Open3D point cloud
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points[:, :3])  # x, y, z
+    # Create a tensor-based point cloud for saving scalar fields
+    pcd = o3d.t.geometry.PointCloud(o3d.core.Tensor(points[:, :3], dtype=o3d.core.Dtype.Float32))
 
-    # Handle normals
+    # Attach labels as a point property if provided
+    if labels is not None:
+        pcd.point["organ_label"] = o3d.core.Tensor(
+            labels.reshape(-1, 1), dtype=o3d.core.Dtype.Int32
+        )
+
+    # Create leaf tip mask and attach as property (only for sparse GT files)
+    if include_leaf_tips and leaf_tip_idxs is not None:
+        leaf_tip_mask = np.zeros(len(points), dtype=np.uint8)
+        if len(leaf_tip_idxs) > 0:
+            leaf_tip_mask[leaf_tip_idxs] = 1
+        pcd.point["is_leaf_tip"] = o3d.core.Tensor(
+            leaf_tip_mask.reshape(-1, 1), dtype=o3d.core.Dtype.UInt8
+        )
+
+    # Handle normals (convert to legacy PointCloud for normal estimation)
     if estimate_normals:
-        pcd.estimate_normals()
-        pcd.orient_normals_consistent_tangent_plane(k=30)
-        pcd.orient_normals_to_align_with_direction()
+        legacy_pcd = o3d.geometry.PointCloud()
+        legacy_pcd.points = o3d.utility.Vector3dVector(points[:, :3])
+        legacy_pcd.estimate_normals()
+        legacy_pcd.orient_normals_consistent_tangent_plane(k=30)
+        legacy_pcd.orient_normals_to_align_with_direction()
+        normals = np.asarray(legacy_pcd.normals)
+        pcd.point["normals"] = o3d.core.Tensor(normals, dtype=o3d.core.Dtype.Float32)
     elif points.shape[1] == 6:
         # Normals already in the data
-        pcd.normals = o3d.utility.Vector3dVector(points[:, 3:6])
+        pcd.point["normals"] = o3d.core.Tensor(points[:, 3:6], dtype=o3d.core.Dtype.Float32)
 
     # Save point cloud
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    o3d.io.write_point_cloud(str(output_path), pcd)
+    o3d.t.io.write_point_cloud(str(output_path), pcd)
     return True
 
 
@@ -76,17 +100,40 @@ def export_leaf_sequence(
         leaf_id = tp["leaf_id"]
         file_stem = tp["file_path"].stem
 
-        # Export dense if requested and available
+        # Export dense if requested and available (no leaf tips for dense)
         if export_dense and tp.get("dense_points") is not None:
             filename = f"{file_stem}_leaf{leaf_id}_dense.ply"
             dense_path = output_dir / "dense_pc" / filename
-            export_timepoint(tp["dense_points"], dense_path, estimate_normals)
+            export_timepoint(
+                tp["dense_points"],
+                dense_path,
+                estimate_normals,
+                include_leaf_tips=False  # Dense point clouds don't need leaf tips
+            )
 
-        # Export sparse if requested
+        # Export sparse if requested (with leaf tips)
         if export_sparse and tp.get("points") is not None:
             filename = f"{file_stem}_leaf{leaf_id}_sparse.ply"
             sparse_path = output_dir / "sparse_pc" / filename
-            export_timepoint(tp["points"], sparse_path, estimate_normals)
+
+            # For leaf sequences, leaf tip is a single point - create index array
+            leaf_tip_idxs = None
+            if tp.get("leaf_tip") is not None:
+                # Find the index of the leaf tip in the point cloud
+                leaf_points = tp["points"]
+                leaf_tip_coord = tp["leaf_tip"]
+                # Find closest point to leaf tip coordinate
+                distances = np.linalg.norm(leaf_points - leaf_tip_coord, axis=1)
+                leaf_tip_idx = np.argmin(distances)
+                leaf_tip_idxs = np.array([leaf_tip_idx])
+
+            export_timepoint(
+                tp["points"],
+                sparse_path,
+                estimate_normals,
+                leaf_tip_idxs=leaf_tip_idxs,
+                include_leaf_tips=True
+            )
 
 
 def export_plant_sequence(
@@ -113,17 +160,30 @@ def export_plant_sequence(
         day = tp["day"]
         file_stem = tp["file_path"].stem
 
-        # Export dense if requested and available
+        # Export dense if requested and available (no leaf tips or labels for dense)
         if export_dense and tp.get("dense_points") is not None:
             filename = f"{file_stem}_dense.ply"
             dense_path = output_dir / "dense_pc" / filename
-            export_timepoint(tp["dense_points"], dense_path, estimate_normals)
+            export_timepoint(
+                tp["dense_points"],
+                dense_path,
+                estimate_normals,
+                labels=tp.get("dense_labels"),
+                include_leaf_tips=False  # Dense point clouds don't need leaf tips
+            )
 
-        # Export sparse if requested
+        # Export sparse if requested (with labels and leaf tips)
         if export_sparse and tp.get("points") is not None:
             filename = f"{file_stem}_sparse.ply"
             sparse_path = output_dir / "sparse_pc" / filename
-            export_timepoint(tp["points"], sparse_path, estimate_normals)
+            export_timepoint(
+                tp["points"],
+                sparse_path,
+                estimate_normals,
+                labels=tp.get("labels"),
+                leaf_tip_idxs=tp.get("leaf_tip_idxs"),
+                include_leaf_tips=True
+            )
 
 
 def main():
