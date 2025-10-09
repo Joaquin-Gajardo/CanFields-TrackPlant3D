@@ -210,6 +210,24 @@ def velocity_test():
         if epoch % 5000 == 0 or epoch == num_epochs - 1:  # 200
             trainer.save_model(epoch, experiment_directory)
 
+        # Compute and save metrics periodically (every 5000 epochs or at the end)
+        if epoch % 5000 == 0 or epoch == num_epochs:
+            try:
+                metrics_dict = trainer.compute_and_save_metrics(epoch)
+                if metrics_dict:
+                    wandb.log(
+                        {
+                            "eval/mean_chamfer_distance": metrics_dict[
+                                "mean_chamfer_distance"
+                            ],
+                            "eval/std_chamfer_distance": metrics_dict[
+                                "std_chamfer_distance"
+                            ],
+                        }
+                    )
+            except Exception as e:
+                logging.warning(f"Failed to compute metrics at epoch {epoch}: {e}")
+
 
 if __name__ == "__main__":
     setup_seed(3407)

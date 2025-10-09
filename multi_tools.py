@@ -11,6 +11,7 @@ from pytorch3d.ops.knn import knn_gather, knn_points
 from losses.recon import ReconLoss_debug
 from networks.multi_velocity_debug import adjust_net
 from utils import *
+from metrics.metrics import PlantMetrics
 
 
 def build_args():
@@ -878,6 +879,108 @@ class Trainer:
         )
         self.decoder.train()
 
+    def compute_and_save_metrics(self, epoch):
+        """
+        Compute quantitative metrics and save them to JSON.
+        This method samples the current model state and compares with ground truth.
+        """
+        import json
+        self.decoder.eval()
+
+        metrics_calculator = PlantMetrics()
+        chamfer_distances = []
+
+        # Compute metrics for each timestep
+        for idx in range(self.start_idx, self.end_idx + 1):
+            # Get ground truth points
+            gt_data = self.sdf_dataset[idx]
+            gt_pts = gt_data["pts"]
+            # Ensure gt_pts is on cuda
+            if not gt_pts.is_cuda:
+                gt_pts = gt_pts.cuda()
+
+            # Get predicted points by sampling from SDF
+            # Use the same bounding box logic as in save_mesh
+            sw_pts = self.sdf_dataset.evaluate_train(idx)
+            if not sw_pts.is_cuda:
+                sw_pts = sw_pts.cuda()
+
+            sw_bbox_min = sw_pts.min(0, keepdim=True)[0]
+            sw_bbox_max = sw_pts.max(0, keepdim=True)[0]
+            swbbox_middle = 0.5 * (sw_bbox_min + sw_bbox_max)
+            swbbox_len = torch.abs(sw_bbox_max - swbbox_middle)
+
+            # Sample points from the predicted SDF
+            # Note: This is a simplified version. For accurate metrics,
+            # you should use marching cubes and sample from the mesh surface
+            num_samples = min(len(gt_pts), 5000)
+
+            # Create a grid of points in the bounding box
+            grid_size = int(num_samples ** (1/3)) + 1
+            x = torch.linspace(-1.7, 1.7, grid_size, device='cuda')
+            y = torch.linspace(-1.7, 1.7, grid_size, device='cuda')
+            z = torch.linspace(-1.7, 1.7, grid_size, device='cuda')
+
+            xx, yy, zz = torch.meshgrid(x, y, z, indexing='ij')
+            grid_pts = torch.stack([xx.flatten(), yy.flatten(), zz.flatten()], dim=1)
+            grid_pts = grid_pts * swbbox_len + swbbox_middle
+
+            # Evaluate SDF at grid points (in batches to avoid OOM)
+            batch_size = 10000
+            sdf_values = []
+
+            for i in range(0, len(grid_pts), batch_size):
+                batch_pts = grid_pts[i:i+batch_size]
+                batch_pts.requires_grad = False
+
+                with torch.no_grad():
+                    # Decode SDF values
+                    sdf_batch = self.decoder.sdf_decoder(batch_pts, None)
+                    sdf_values.append(sdf_batch.squeeze())
+
+            sdf_values = torch.cat(sdf_values, dim=0)
+
+            # Extract points near the surface (where SDF ≈ 0)
+            surface_mask = torch.abs(sdf_values) < 0.05
+            pred_surface_pts = grid_pts[surface_mask]
+
+            # If we have surface points, compute Chamfer distance
+            if len(pred_surface_pts) > 10:
+                # Subsample to num_samples points
+                if len(pred_surface_pts) > num_samples:
+                    indices = torch.randperm(len(pred_surface_pts), device='cuda')[:num_samples]
+                    pred_surface_pts = pred_surface_pts[indices]
+
+                cd = metrics_calculator.chamfer_distance(
+                    pred_surface_pts, gt_pts, reduction="mean", bidirectional=True
+                )
+                chamfer_distances.append(float(cd.cpu().item()))
+            else:
+                logging.warning(f"No surface points found for timestep {idx}")
+
+        # Save metrics to JSON
+        if len(chamfer_distances) > 0:
+            metrics_dict = {
+                "epoch": epoch,
+                "num_timesteps": len(chamfer_distances),
+                "mean_chamfer_distance": float(np.mean(chamfer_distances)),
+                "std_chamfer_distance": float(np.std(chamfer_distances)),
+                "chamfer_distances_per_timestep": chamfer_distances,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+            metrics_dir = os.path.join(self.experiment_directory, "metrics")
+            os.makedirs(metrics_dir, exist_ok=True)
+            metrics_file = os.path.join(metrics_dir, f"training_metrics_epoch_{epoch}.json")
+
+            with open(metrics_file, "w") as f:
+                json.dump(metrics_dict, f, indent=2)
+
+            logging.info(f"Training metrics saved: Mean CD = {metrics_dict['mean_chamfer_distance']:.6f}")
+
+        self.decoder.train()
+        return metrics_dict if len(chamfer_distances) > 0 else None
+
     def compute_total_loss(self, epoch, fit_loss, code_loss, align_loss, ajust_losses):
         src_elastic_loss, src_l2_loss, src_prob_loss = ajust_losses
 
@@ -1236,6 +1339,103 @@ class Trainer_woadjust:
                 lag_scale=self.sdf_dataset.scale,
             )
         self.decoder.train()
+
+    def compute_and_save_metrics(self, epoch):
+        """
+        Compute quantitative metrics and save them to JSON.
+        This method samples the current model state and compares with ground truth.
+        """
+        import json
+        self.decoder.eval()
+
+        metrics_calculator = PlantMetrics()
+        chamfer_distances = []
+
+        # Compute metrics for each timestep
+        for idx in range(self.start_idx, self.end_idx + 1):
+            # Get ground truth points
+            gt_data = self.sdf_dataset[idx]
+            gt_pts = gt_data["pts"]
+            # Ensure gt_pts is on cuda
+            if not gt_pts.is_cuda:
+                gt_pts = gt_pts.cuda()
+
+            # Get predicted points by sampling from SDF
+            sw_pts = self.sdf_dataset.evaluate_train(idx)
+            if not sw_pts.is_cuda:
+                sw_pts = sw_pts.cuda()
+
+            sw_bbox_min = sw_pts.min(0, keepdim=True)[0]
+            sw_bbox_max = sw_pts.max(0, keepdim=True)[0]
+            swbbox_middle = 0.5 * (sw_bbox_min + sw_bbox_max)
+            swbbox_len = torch.abs(sw_bbox_max - swbbox_middle)
+
+            num_samples = min(len(gt_pts), 5000)
+
+            # Create a grid of points in the bounding box
+            grid_size = int(num_samples ** (1/3)) + 1
+            x = torch.linspace(-1.7, 1.7, grid_size, device='cuda')
+            y = torch.linspace(-1.7, 1.7, grid_size, device='cuda')
+            z = torch.linspace(-1.7, 1.7, grid_size, device='cuda')
+
+            xx, yy, zz = torch.meshgrid(x, y, z, indexing='ij')
+            grid_pts = torch.stack([xx.flatten(), yy.flatten(), zz.flatten()], dim=1)
+            grid_pts = grid_pts * swbbox_len + swbbox_middle
+
+            # Evaluate SDF at grid points (in batches to avoid OOM)
+            batch_size = 10000
+            sdf_values = []
+
+            for i in range(0, len(grid_pts), batch_size):
+                batch_pts = grid_pts[i:i+batch_size]
+                batch_pts.requires_grad = False
+
+                with torch.no_grad():
+                    sdf_batch = self.decoder.sdf_decoder(batch_pts, None)
+                    sdf_values.append(sdf_batch.squeeze())
+
+            sdf_values = torch.cat(sdf_values, dim=0)
+
+            # Extract points near the surface (where SDF ≈ 0)
+            surface_mask = torch.abs(sdf_values) < 0.05
+            pred_surface_pts = grid_pts[surface_mask]
+
+            # If we have surface points, compute Chamfer distance
+            if len(pred_surface_pts) > 10:
+                # Subsample to num_samples points
+                if len(pred_surface_pts) > num_samples:
+                    indices = torch.randperm(len(pred_surface_pts), device='cuda')[:num_samples]
+                    pred_surface_pts = pred_surface_pts[indices]
+
+                cd = metrics_calculator.chamfer_distance(
+                    pred_surface_pts, gt_pts, reduction="mean", bidirectional=True
+                )
+                chamfer_distances.append(float(cd.cpu().item()))
+            else:
+                logging.warning(f"No surface points found for timestep {idx}")
+
+        # Save metrics to JSON
+        if len(chamfer_distances) > 0:
+            metrics_dict = {
+                "epoch": epoch,
+                "num_timesteps": len(chamfer_distances),
+                "mean_chamfer_distance": float(np.mean(chamfer_distances)),
+                "std_chamfer_distance": float(np.std(chamfer_distances)),
+                "chamfer_distances_per_timestep": chamfer_distances,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+            metrics_dir = os.path.join(self.experiment_directory, "metrics")
+            os.makedirs(metrics_dir, exist_ok=True)
+            metrics_file = os.path.join(metrics_dir, f"training_metrics_epoch_{epoch}.json")
+
+            with open(metrics_file, "w") as f:
+                json.dump(metrics_dict, f, indent=2)
+
+            logging.info(f"Training metrics saved: Mean CD = {metrics_dict['mean_chamfer_distance']:.6f}")
+
+        self.decoder.train()
+        return metrics_dict if len(chamfer_distances) > 0 else None
 
     def compute_total_loss(self, fit_loss, code_loss, align_loss):
         if self.args.methods != None:

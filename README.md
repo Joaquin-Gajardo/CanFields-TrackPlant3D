@@ -129,6 +129,21 @@ To animate the reconstructed sequence, run:
 ```bash
 python create_animation.py -d pheno4d -e 15000 -m 1 -o datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2_leaf1 -en {timestamp}_tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1 --num_frames 9 --fps 2
 ```
+
+#### Quantitative Evaluation
+
+Compute reconstruction quality metrics (Chamfer Distance and Leaf Tip EPE):
+
+```bash
+# Compute metrics
+python eval_metrics.py -d pheno4d -o <path> -en <experiment_name> -e last --num_samples 10000
+
+# Aggregate results across experiments
+python metrics/aggregate_results.py --base_dir results/pheno4d --export_csv --export_latex
+```
+
+**Metrics saved to**: `results/.../metrics/metrics_epoch_{epoch}.json`
+
 ---
 
 ## Training on ETH HPC (euler)
