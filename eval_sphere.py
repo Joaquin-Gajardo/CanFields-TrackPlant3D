@@ -432,7 +432,7 @@ def load_model_latents(args, epoch_num):
         )
 
 
-def creat_colored_canonic_mesh(decoder, sdf_dataset, start_idx, end_idx, export_path):
+def creat_colored_canonic_mesh(decoder, sdf_dataset, start_idx, end_idx, export_path, methods=None):
     sw_pts = sdf_dataset.evaluate_train(int(start_idx + end_idx // 2))
     sw_bbox_min = sw_pts.min(0, keepdim=True)[0]
     sw_bbox_max = sw_pts.max(0, keepdim=True)[0]
@@ -442,6 +442,14 @@ def creat_colored_canonic_mesh(decoder, sdf_dataset, start_idx, end_idx, export_
     swbbox_len = torch.abs(sw_bbox_max - swbbox_middle)
     min_swbbox = swbbox_middle - 1.7 * swbbox_len
     # inter_latent = None
+
+    # For 4DSDF, we need to pass the template time
+    this_time = None
+    if methods == "4DSDF":
+        start_time = (sdf_dataset[start_idx])["normed_time"].cuda()
+        end_time = (sdf_dataset[end_idx])["normed_time"].cuda()
+        this_time = 0.5 * (start_time + end_time)
+
     create_mesh_colored_wmw(
         decoder,
         None,
@@ -451,6 +459,7 @@ def creat_colored_canonic_mesh(decoder, sdf_dataset, start_idx, end_idx, export_
         sm_len=2 * 1.7 * swbbox_len,
         lag_mean=None,
         lag_scale=None,
+        this_time=this_time,
     )
 
 
@@ -665,7 +674,7 @@ if __name__ == "__main__":
             # Ensure the export directory exists before creating the template
             os.makedirs(export_path, mode=0o777, exist_ok=True)
             creat_colored_canonic_mesh(
-                decoder, sdf_dataset, start_idx, end_idx, export_path
+                decoder, sdf_dataset, start_idx, end_idx, export_path, args.methods
             )
 
         start_time = (sdf_dataset[start_idx])["normed_time"].cuda()
