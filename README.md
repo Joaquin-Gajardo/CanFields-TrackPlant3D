@@ -109,27 +109,27 @@ python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw --output-
 #### Leaf sequence
 ```bash
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -d pheno4d -u True -m False -c 0,8,1 -ev 6000
+python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2_leaf1 -d pheno4d -u True -m False -c 0,8,1 -ev 6000
 
 # Eval: create canonical shape
-python eval_sphere.py -d pheno4d -e 5000 -s 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 
 # Eval: deform canonical shape
-python eval_sphere.py -d pheno4d -e 5000 -s 2 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+python eval_sphere.py -d pheno4d -e 15000 -s 2 -o datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 ```
 #### Plant sequence
 Note that this could require up to 80GB of GPU memory.
 ```bash
-python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/plants/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 15000
-python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/plants/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
-python eval_sphere.py -d pheno4d -e 15000 -s 2 -o datasets/Pheno4D/plants/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/processed/v1/plant_sequences/tomato/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 15000
+python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/processed/v1/plant_sequences/tomato/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
+python eval_sphere.py -d pheno4d -e 15000 -s 2 -o datasets/Pheno4D/processed/v1/plant_sequences/tomato/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 ```
 
 #### Animation
 To animate the reconstructed sequence, run:
 
 ```bash
-python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -en {timestamp}_tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1 --num_frames 8 --fps 2
+python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2_leaf1 -en {timestamp}_tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1 --num_frames 8 --fps 2
 ```
 ---
 

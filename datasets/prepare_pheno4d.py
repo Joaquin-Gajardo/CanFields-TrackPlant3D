@@ -6,6 +6,7 @@ plant or leaf sequences in the format expected by CanFields training code.
 """
 
 import argparse
+import re
 import shutil
 from pathlib import Path
 
@@ -70,10 +71,6 @@ def export_leaf_sequence(
     sequence_name = leaf_timeseries["sequence_name"]
     timepoints = leaf_timeseries["timepoints"]
 
-    # Create mesh directory
-    mesh_dir = output_dir / "gt_mesh"
-    mesh_dir.mkdir(parents=True, exist_ok=True)
-
     for tp in timepoints:
         day = tp["day"]
         leaf_id = tp["leaf_id"]
@@ -111,10 +108,6 @@ def export_plant_sequence(
     """
     sequence_name = plant_timeseries["sequence_name"]
     timepoints = plant_timeseries["timepoints"]
-
-    # Create mesh directory
-    mesh_dir = output_dir / "gt_mesh"
-    mesh_dir.mkdir(parents=True, exist_ok=True)
 
     for tp in timepoints:
         day = tp["day"]
@@ -304,7 +297,9 @@ def main():
     # Group by crop for organized output
     crop_sequences = {}
     for ts in all_sequences:
-        crop_name = ts["sequence_name"].split("_")[0].removesuffix("2")  # for tomato2
+        crop_name = ts["sequence_name"].split("_")[0]
+        crop_name = re.sub(r"\d+$", "", crop_name)  # get rid of trailing digits
+
         if crop_name not in crop_sequences:
             crop_sequences[crop_name] = []
         crop_sequences[crop_name].append(ts)
