@@ -3,7 +3,15 @@ SEQUENCE_PATH=${1:-"datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2
 METHOD=${2:-"ode_solve"}
 EPOCHS=15000
 echo "Using sequence path: $SEQUENCE_PATH"
-echo "Using method: $METHOD, from options: "ode_solve", "4DSDF", "TPSR", "NVFI", "OF4D""
+echo "Using method: $METHOD, from options: \"ode_solve\", \"4DSDF\", \"TPSR\", \"NVFI\", \"OF4D\""
+
+# Set adjust flag (-u) to False for non-ode_solve methods
+if [ "$METHOD" != "ode_solve" ]; then
+    ADJUST="False"
+else
+    ADJUST="True"
+fi
+echo "Using adjust ( -u ): $ADJUST"
 
 # Extract crop and sequence name from path
 CROP=$(echo $SEQUENCE_PATH | awk -F'/' '{print $(NF-1)}')
@@ -17,7 +25,7 @@ fi
 echo "Detected $NUM_TIMESTEPS timesteps for $SEQUENCE_NAME (crop: $CROP)"
 
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u True -m False -c 0,$NUM_TIMESTEPS,1 -ev $EPOCHS --method $METHOD
+python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $EPOCHS --method $METHOD
 
 # Get the latest experiment directory
 # New path: results/pheno4d/{method}/{crop}/{sequence_name}/
