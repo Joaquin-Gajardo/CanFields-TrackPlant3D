@@ -228,7 +228,9 @@ def load_network_model_others(args, specs, start_idx, end_idx):
     decoder = decoder.cuda()
 
     # shape_codes inititalize
-    if args.methods == "OF4D":
+    # Extract base method name (remove _woAdaptor suffix if present)
+    base_method = args.methods.replace("_woAdaptor", "")
+    if base_method == "OF4D":
         start_end_vecs = torch.nn.Embedding(2, latent_size, max_norm=code_bound).cuda()
     else:
         start_end_vecs = torch.nn.Embedding(1, latent_size, max_norm=code_bound).cuda()
