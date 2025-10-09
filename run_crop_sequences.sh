@@ -10,26 +10,26 @@ declare -A CROP_SEQUENCES
 
 CROP_SEQUENCES[maize]="
 plant_sequences/maize/maize_control_plant1
-plant_sequences/maize/maize_control_plant1
-plant_sequences/maize/maize_control_plant1
+plant_sequences/maize/maize_control_plant2
+plant_sequences/maize/maize_control_plant3
 "
 
 CROP_SEQUENCES[sorghum]="
 plant_sequences/sorghum/sorghum_control_plant1
-plant_sequences/sorghum/sorghum_highlight_plant1
-plant_sequences/sorghum/sorghum_highlight_plant1
+plant_sequences/sorghum/sorghum_highlight_plant2
+plant_sequences/sorghum/sorghum_highlight_plant3
 "
 
 CROP_SEQUENCES[tobacco]="
+plant_sequences/tobacco/tobacco_control_plant2
 plant_sequences/tobacco/tobacco_control_plant1
-plant_sequences/tobacco/tobacco_coshade_control_plant1
-plant_sequences/tobacco/tobacco_shade_plant1
+plant_sequences/tobacco/tobacco_shade_plant3
 "
 
 CROP_SEQUENCES[tomato]="
-plant_sequences/tomato/tomato1_heat_plant1
-plant_sequences/tomato/tomato1_control2_plant1
-plant_sequences/tomato/tomato2_control_plant1
+plant_sequences/tomato/tomato1_heat_plant3
+plant_sequences/tomato/tomato1_control2_plant2
+plant_sequences/tomato/tomato2_control_plant3
 "
 
 # Get crop name and method from arguments
