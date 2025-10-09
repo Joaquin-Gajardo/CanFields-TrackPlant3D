@@ -94,11 +94,18 @@ python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u
 ```
 ### Pheno4D dataset
 
-First, install the following repository via pip to get the dataloaders (it will automatically download the dataset the first time you use it):
+#### Data preparation
+This steps will automatically download the dataset and prepare the sequences for training.
 ```bash
+# 1. Install plant-shape-analysis package
 pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git
+
+# 2. Prepare dataset (default: saves both plants and organs sequences, sparse only)
+python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw/v1 --output-dir datasets/Pheno4D/processed/v1 # Defaults: --mode both --no-dense
 ```
 
+```bash
+# 3. Verify the prepared dataset
 #### Leaf sequence
 ```bash
 # Train CanFields
@@ -111,7 +118,7 @@ python eval_sphere.py -d pheno4d -e 5000 -s 1 -o datasets/Pheno4D/tomato/tomato2
 python eval_sphere.py -d pheno4d -e 5000 -s 2 -o datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
 ```
 #### Plant sequence
-Note that this will require a GPU with at least 40GB of memory.
+Note that this could require up to 80GB of GPU memory.
 ```bash
 python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/plants/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 15000
 python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/plants/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1
@@ -131,7 +138,7 @@ python create_animation.py -d pheno4d -e 5000 -m 1 -o datasets/Pheno4D/tomato/to
 module purge
 conda activate canfields
 module load stack/2024-05 gcc/13.2.0 cuda/12.2.1 eth_proxy
-# Then run training command as above
+sbatch run_euler.sh tomato2_control_plant2
 ```
 
 ## Citation
