@@ -12,11 +12,7 @@ import trimesh
 from matplotlib import cm
 from tqdm import tqdm
 
-from eval_sphere import (
-    get_available_checkpoints,
-    load_model_latents,
-    select_epochs_to_evaluate,
-)
+from eval_sphere import load_model_latents, select_epochs_to_evaluate
 from utils import setup_seed
 
 
@@ -512,16 +508,34 @@ if __name__ == "__main__":
     import json
 
     specs = json.load(open(eval_args.specifications))
-    obj_name = eval_args.object_name.split("/")[-1] if eval_args.object_name else ""
-    experiment_folder = eval_args.experiment_name.split("/")[-1]
 
-    experiment_path = os.path.join(
-        eval_args.base_results_dir,
-        eval_args.dataset_name,
-        obj_name,
-        eval_args.methods,
-        experiment_folder,
-    )
+    if eval_args.dataset_name == "pheno4d":
+        # For pheno4d: extract crop and sequence name
+        path_parts = eval_args.object_name.split("/")
+        crop = path_parts[-2]
+        sequence_name = path_parts[-1]
+        experiment_folder = eval_args.experiment_name.split("/")[-1]
+
+        experiment_path = os.path.join(
+            eval_args.base_results_dir,
+            eval_args.dataset_name,
+            eval_args.methods,
+            crop,
+            sequence_name,
+            experiment_folder,
+        )
+    else:
+        # Original structure for other datasets
+        obj_name = eval_args.object_name.split("/")[-1] if eval_args.object_name else ""
+        experiment_folder = eval_args.experiment_name.split("/")[-1]
+
+        experiment_path = os.path.join(
+            eval_args.base_results_dir,
+            eval_args.dataset_name,
+            obj_name,
+            eval_args.methods,
+            experiment_folder,
+        )
     # Get list of epochs to evaluate (use original args.epoch, not eval_args.epoch)
     epochs_to_evaluate = select_epochs_to_evaluate(args.epoch, experiment_path)
 
@@ -556,5 +570,7 @@ if __name__ == "__main__":
 
     print(f"\n{'='*80}")
     created_count = len(epochs_to_evaluate) - skipped_count
-    print(f"All animations completed! Created {created_count}, skipped {skipped_count} (total: {len(epochs_to_evaluate)} epoch(s))")
+    print(
+        f"All animations completed! Created {created_count}, skipped {skipped_count} (total: {len(epochs_to_evaluate)} epoch(s))"
+    )
     print(f"{'='*80}")

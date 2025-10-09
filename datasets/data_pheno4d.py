@@ -7,7 +7,7 @@ import torch
 
 
 class DeformSamples(torch.utils.data.Dataset):
-    def __init__(self, filename, start_idx=0, gap=None, train_step=1, use_dense=True):
+    def __init__(self, filename, start_idx=0, gap=None, train_step=1, use_dense=False):
         """
         Pheno4D dataset loader for plant sequences.
 

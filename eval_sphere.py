@@ -129,7 +129,9 @@ def get_available_checkpoints(experiment_directory):
     Discover available checkpoint files in the experiment directory.
     Returns a sorted list of epoch numbers.
     """
-    checkpoints_dir = os.path.join(experiment_directory, "checkpoints", "ModelParameters")
+    checkpoints_dir = os.path.join(
+        experiment_directory, "checkpoints", "ModelParameters"
+    )
     if not os.path.exists(checkpoints_dir):
         raise ValueError(f"Checkpoints directory not found: {checkpoints_dir}")
 
@@ -148,7 +150,9 @@ def get_available_checkpoints(experiment_directory):
             continue
 
     if not epochs:
-        raise ValueError(f"Could not parse epoch numbers from checkpoint files in {checkpoints_dir}")
+        raise ValueError(
+            f"Could not parse epoch numbers from checkpoint files in {checkpoints_dir}"
+        )
 
     return sorted(epochs)
 
@@ -166,23 +170,29 @@ def select_epochs_to_evaluate(epoch_arg, experiment_directory):
     """
     available_epochs = get_available_checkpoints(experiment_directory)
 
-    if epoch_arg.lower() == 'all':
+    if epoch_arg.lower() == "all":
         return available_epochs
-    elif epoch_arg.lower() == 'last':
+    elif epoch_arg.lower() == "last":
         return [available_epochs[-1]]
     else:
         # Specific epoch number
         try:
             specific_epoch = int(epoch_arg)
             if specific_epoch not in available_epochs:
-                print(f"Warning: Requested epoch {specific_epoch} not found. Available epochs: {available_epochs}")
+                print(
+                    f"Warning: Requested epoch {specific_epoch} not found. Available epochs: {available_epochs}"
+                )
                 print(f"Using closest available epoch...")
                 # Find closest epoch
-                closest_epoch = min(available_epochs, key=lambda x: abs(x - specific_epoch))
+                closest_epoch = min(
+                    available_epochs, key=lambda x: abs(x - specific_epoch)
+                )
                 return [closest_epoch]
             return [specific_epoch]
         except ValueError:
-            raise ValueError(f"Invalid epoch argument: {epoch_arg}. Must be 'all', 'last', or a number.")
+            raise ValueError(
+                f"Invalid epoch argument: {epoch_arg}. Must be 'all', 'last', or a number."
+            )
 
 
 def load_model_latents(args, epoch_num):
@@ -193,6 +203,7 @@ def load_model_latents(args, epoch_num):
         args: Command line arguments
         epoch_num: Specific epoch number to load
     """
+
     def signal_handler(sig, frame):
         logging.info("Stopping early...")
         sys.exit(0)
@@ -269,7 +280,7 @@ def load_model_latents(args, epoch_num):
         # Use the object_name as the dataset path
         specs["ShapePath"] = args.object_name
         sdf_dataset = data_pheno4d.DeformSamples(
-            specs["ShapePath"], start_idx=start_idx, gap=gap, train_step=stride
+            specs["ShapePath"], start_idx=start_idx, gap=gap, train_step=stride, use_dense=False
         )
     else:
         raise ValueError(
@@ -280,28 +291,44 @@ def load_model_latents(args, epoch_num):
     end_idx = len(sdf_dataset) - 1
 
     ### Set paths ###
-    # Extract object name from object_name path for directory structure
-    # For pheno4d: datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -> tomato2_control_plant2_leaf1
-    # For others: object_name is already the base name
+    # Extract crop and sequence name from object_name path for pheno4d
+    # For pheno4d: Pheno4D/processed/v1/organ_sequences/tomato/{sequence_name}
+    # For others: use object_name as-is for backwards compatibility
     if args.dataset_name == "pheno4d":
-        object_base_name = args.object_name.split("/")[-1]
-    else:
-        object_base_name = sub_obj_name
+        path_parts = args.object_name.split("/")
+        crop = path_parts[-2]  # Extract crop (e.g., "tomato")
+        sequence_name = path_parts[-1]  # Extract sequence name
 
-    # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
-    if args.dataset_name == "pheno4d" and args.experiment_name:
-        experiment_folder = args.experiment_name.split("/")[-1]
+        # For pheno4d, use experiment_name as the folder name
+        if args.experiment_name:
+            experiment_folder = args.experiment_name.split("/")[-1]
+        else:
+            raise ValueError(
+                "For pheno4d dataset, --experiment_name argument is required"
+            )
+
+        # Build path: results/pheno4d/{method}/{crop}/{sequence_name}/{experiment_name}/
+        experiment_directory = os.path.join(
+            args.base_results_dir,
+            args.dataset_name,
+            args.methods,
+            crop,
+            sequence_name,
+            experiment_folder,
+        )
     else:
+        # Original structure for other datasets
+        object_base_name = sub_obj_name
         experiment_folder = obj_name
 
-    # Build experiment directory path: results/{dataset}/{object}/{method}/{experiment_name}/
-    experiment_directory = os.path.join(
-        args.base_results_dir,
-        args.dataset_name,
-        object_base_name,
-        args.methods,
-        experiment_folder,
-    )
+        # Build experiment directory path: results/{dataset}/{object}/{method}/{experiment_name}/
+        experiment_directory = os.path.join(
+            args.base_results_dir,
+            args.dataset_name,
+            object_base_name,
+            args.methods,
+            experiment_folder,
+        )
 
     # Build export path based on method, including epoch subdirectory
     export_path = os.path.join(
@@ -523,14 +550,10 @@ if __name__ == "__main__":
         sub_obj_name = args.object_name.split("_full_l2")[0]
         obj_name = args.object_name
     elif args.dataset_name == "defaust":
-        obj_name = (
-            args.object_name + "_S3_full_l2_0.25_elas_20.0_prob_0.12"
-        )
+        obj_name = args.object_name + "_S3_full_l2_0.25_elas_20.0_prob_0.12"
         sub_obj_name = args.object_name
     elif args.dataset_name == "medical":
-        obj_name = (
-            args.object_name + "_M1_full_l2_0.25_elas_10.0_prob_0.18"
-        )
+        obj_name = args.object_name + "_M1_full_l2_0.25_elas_10.0_prob_0.18"
         sub_obj_name = args.object_name
     elif args.dataset_name == "pheno4d":
         if args.experiment_name:
@@ -546,22 +569,35 @@ if __name__ == "__main__":
             f"The variable must be in either animals, medical, defaust, or pheno4d"
         )
 
-    # For pheno4d, use experiment_name as the folder name, otherwise use obj_name
-    if args.dataset_name == "pheno4d" and args.experiment_name:
+    # Build experiment directory path
+    if args.dataset_name == "pheno4d":
+        # Extract crop and sequence name from object_name
+        path_parts = args.object_name.split("/")
+        crop = path_parts[-2]
+        sequence_name = path_parts[-1]
         experiment_folder = args.experiment_name.split("/")[-1]
-        object_base_name = args.object_name.split("/")[-1]
+
+        # Build path: results/pheno4d/{method}/{crop}/{sequence_name}/{experiment_name}/
+        experiment_directory = os.path.join(
+            args.base_results_dir,
+            args.dataset_name,
+            args.methods,
+            crop,
+            sequence_name,
+            experiment_folder,
+        )
     else:
+        # Original structure for other datasets
         experiment_folder = obj_name
         object_base_name = sub_obj_name
 
-    # Build experiment directory path
-    experiment_directory = os.path.join(
-        args.base_results_dir,
-        args.dataset_name,
-        object_base_name,
-        args.methods,
-        experiment_folder,
-    )
+        experiment_directory = os.path.join(
+            args.base_results_dir,
+            args.dataset_name,
+            object_base_name,
+            args.methods,
+            experiment_folder,
+        )
 
     # Get list of epochs to evaluate
     epochs_to_evaluate = select_epochs_to_evaluate(args.epoch, experiment_directory)
@@ -586,10 +622,15 @@ if __name__ == "__main__":
             key_file = os.path.join(epoch_export_path, "normalized_tempt.ply")
         else:  # step == "2"
             # Check if there are any numbered PLY files (e.g., 0.0.ply, 0.125.ply, etc.)
-            ply_files_exist = os.path.exists(epoch_export_path) and any(
-                f.endswith('.ply') and f != 'normalized_tempt.ply'
-                for f in os.listdir(epoch_export_path)
-            ) if os.path.exists(epoch_export_path) else False
+            ply_files_exist = (
+                os.path.exists(epoch_export_path)
+                and any(
+                    f.endswith(".ply") and f != "normalized_tempt.ply"
+                    for f in os.listdir(epoch_export_path)
+                )
+                if os.path.exists(epoch_export_path)
+                else False
+            )
             key_file = epoch_export_path if ply_files_exist else None
 
         if key_file and os.path.exists(key_file) and not args.overwrite:
@@ -599,9 +640,15 @@ if __name__ == "__main__":
             continue
 
         if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
-            sdf_dataset, decoder, start_end_vecs, start_idx, end_idx, export_path, exp_dir = (
-                load_model_latents(args, epoch_num)
-            )
+            (
+                sdf_dataset,
+                decoder,
+                start_end_vecs,
+                start_idx,
+                end_idx,
+                export_path,
+                exp_dir,
+            ) = load_model_latents(args, epoch_num)
         else:
             (
                 sdf_dataset,
@@ -642,5 +689,7 @@ if __name__ == "__main__":
 
     print(f"\n{'='*80}")
     created_count = len(epochs_to_evaluate) - skipped_count
-    print(f"All evaluations completed! Created {created_count}, skipped {skipped_count} (total: {len(epochs_to_evaluate)} epoch(s))")
+    print(
+        f"All evaluations completed! Created {created_count}, skipped {skipped_count} (total: {len(epochs_to_evaluate)} epoch(s))"
+    )
     print(f"{'='*80}")

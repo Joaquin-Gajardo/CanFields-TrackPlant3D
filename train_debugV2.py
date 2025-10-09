@@ -74,20 +74,35 @@ def velocity_test():
     ############### Logging and Wandb ########################
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Extract object name from object_name path for directory structure
-    # For pheno4d: datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1 -> tomato2_control_plant2_leaf1
-    # For others: object_name is already the base name
-    object_name = args.object_name.split("/")[-1]
-
-    # Build new path structure: results/{dataset}/{object}/{method}/{timestamp}_{experiment_name}/
-    timestamped_exp_name = f"{timestamp}_{obj_name}"
-    experiment_directory = os.path.join(
-        args.base_results_dir,
-        args.dataset_name,
-        object_name,
-        args.methods,
-        timestamped_exp_name,
-    )
+    # Extract crop and sequence name from object_name path
+    # For pheno4d: Pheno4D/processed/v1/organ_sequences/tomato/name -> crop=tomato, name=name
+    # For others: use object_name as-is for backwards compatibility
+    if args.dataset_name == "pheno4d":
+        path_parts = args.object_name.split("/")
+        crop = path_parts[-2]  # Extract crop (e.g., "tomato")
+        sequence_name = path_parts[-1]  # Extract sequence name
+        object_name = sequence_name  # For wandb logging
+        # Build path: results/pheno4d/{method}/{crop}/{sequence_name}/{timestamp}_{experiment_name}/
+        timestamped_exp_name = f"{timestamp}_{obj_name}"
+        experiment_directory = os.path.join(
+            args.base_results_dir,
+            args.dataset_name,
+            args.methods,
+            crop,
+            sequence_name,
+            timestamped_exp_name,
+        )
+    else:
+        # Original structure for other datasets
+        object_name = args.object_name.split("/")[-1]
+        timestamped_exp_name = f"{timestamp}_{obj_name}"
+        experiment_directory = os.path.join(
+            args.base_results_dir,
+            args.dataset_name,
+            object_name,
+            args.methods,
+            timestamped_exp_name,
+        )
     os.makedirs(experiment_directory, exist_ok=True)
 
     # Prepare config for wandb
@@ -189,7 +204,7 @@ def velocity_test():
             mean_time = np.array(times).mean()
             logging.info("computed_time_per100 = {}".format(100 * mean_time))
             times = []
-        if epoch % 2000 == 0 or epoch == num_epochs - 1:  # 200
+        if epoch % 100 == 0 or epoch == num_epochs - 1:  # 200
             trainer.save_model(epoch, experiment_directory)
 
 
