@@ -22,5 +22,11 @@ echo $(module list)
 
 nvidia-smi
 
-# Run the training and evaluation script with object name argument
-bash run_train_eval.sh $1
+# # Run the training and evaluation script with object name argument
+#bash run_train_eval.sh $1
+
+
+# Run crop sequences with crop name and optional method
+# Usage: sbatch run_euler.sh <crop_name> [method]
+# Example: sbatch run_euler.sh maize ode_solve
+bash run_crop_sequences.sh $1 $2
