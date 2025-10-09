@@ -5,19 +5,39 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "metrics/aggregate_results.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "metrics/aggregate_results.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--base_dir",
+                "results/pheno4d",
+                "--export_csv",
+                "--export_latex"
+            ]
+        },
+        {
             "name": "create_animation.py",
             "type": "debugpy",
             "request": "launch",
             "program": "create_animation.py",
             "console": "integratedTerminal",
             "args": [
-                "-d", "pheno4d",
-                "-e", "5000",
-                "-m", "1",
-                "-o", "datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1",
-                "-en", "tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1",
-                "--num_frames", "8",
-                "--fps", "2"
+                "-d",
+                "pheno4d",
+                "-e",
+                "5000",
+                "-m",
+                "1",
+                "-o",
+                "datasets/Pheno4D/tomato/tomato2_control_plant2_leaf1",
+                "-en",
+                "tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_8_stride_1",
+                "--num_frames",
+                "8",
+                "--fps",
+                "2"
             ]
         }
     ]

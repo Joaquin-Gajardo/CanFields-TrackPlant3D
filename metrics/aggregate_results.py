@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""
+Helper script to aggregate metrics across multiple experiments for paper tables.
+
+This script collects metrics from all experiments and outputs:
+- CSV files for easy import into LaTeX/Excel
+- Summary statistics across multiple runs
+- Comparison tables by method, crop, sequence, etc.
+"""
+
+import argparse
+import json
+import os
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+def collect_metrics_from_experiments(
+    base_dir="results/pheno4d",
+    epoch=None,
+    metric_type="eval",  # "eval" or "training"
+):
+    """
+    Collect metrics from all experiments.
+
+    Args:
+        base_dir: Base results directory
+        epoch: Specific epoch to collect (None = use summary or last available)
+        metric_type: "eval" (from eval_metrics.py) or "training" (from training)
+
+    Returns:
+        List of dictionaries containing experiment results
+    """
+    results = []
+    base_path = Path(base_dir)
+
+    # Pattern for metrics files
+    if metric_type == "eval":
+        if epoch:
+            pattern = f"metrics_epoch_{epoch}.json"
+        else:
+            pattern = "metrics_summary.json"
+    else:  # training
+        if epoch:
+            pattern = f"training_metrics_epoch_{epoch}.json"
+        else:
+            pattern = "training_metrics_epoch_*.json"
+
+    # Find all metrics files
+    metrics_files = list(base_path.rglob(pattern))
+
+    if not metrics_files:
+        print(f"\n⚠️  No metrics files found matching pattern: {pattern}")
+        print(f"\nPossible solutions:")
+        if not epoch and metric_type == "eval":
+            print(
+                f"  - No summary files found. Try specifying a specific epoch: --epoch 15000"
+            )
+            print(f"  - Or run evaluation first: python eval_metrics.py ...")
+        elif epoch:
+            print(f"  - Check that evaluation has been run for epoch {epoch}")
+            print(f"  - Try without --epoch flag to search for all available epochs")
+        print(f"  - Verify the base directory path is correct")
+        return []
+
+    for metrics_file in metrics_files:
+        if "wandb" in str(metrics_file):
+            continue  # Skip wandb directories
+
+        try:
+            with open(metrics_file) as f:
+                data = json.load(f)
+
+            # Extract experiment metadata from path
+            # Path structure: results/pheno4d/{method}/{crop}/{sequence}/{experiment_name}/metrics/
+            path_parts = metrics_file.parts
+            method_idx = (
+                path_parts.index("pheno4d") + 1 if "pheno4d" in path_parts else -1
+            )
+
+            if method_idx > 0 and method_idx + 3 < len(path_parts):
+                method = path_parts[method_idx]
+                crop = path_parts[method_idx + 1]
+                sequence = path_parts[method_idx + 2]
+                experiment_name = path_parts[method_idx + 3]
+            else:
+                method = "unknown"
+                crop = "unknown"
+                sequence = "unknown"
+                experiment_name = metrics_file.parent.parent.name
+
+            # Handle summary files differently
+            if "summary" in metrics_file.name:
+                result = {
+                    "experiment": experiment_name,
+                    "method": method,
+                    "crop": crop,
+                    "sequence": sequence,
+                    "num_epochs": data.get("num_epochs_evaluated", 0),
+                    "best_epoch": data.get("best_epoch_by_chamfer", None),
+                    "metrics_file": str(metrics_file),
+                }
+            else:
+                result = {
+                    "experiment": experiment_name,
+                    "method": method,
+                    "crop": crop,
+                    "sequence": sequence,
+                    "epoch": data.get("epoch", None),
+                    "mean_cd": data.get("mean_chamfer_distance", None),
+                    "std_cd": data.get("std_chamfer_distance", None),
+                    "mean_epe": data.get("mean_tip_epe", None),
+                    "std_epe": data.get("std_tip_epe", None),
+                    "num_timesteps": data.get("num_timesteps", None),
+                    "timestamp": data.get("timestamp", None),
+                    "metrics_file": str(metrics_file),
+                }
+
+            results.append(result)
+
+        except Exception as e:
+            print(f"Error reading {metrics_file}: {e}")
+            continue
+
+    return results
+
+
+def create_comparison_table(results, group_by="method"):
+    """
+    Create a comparison table grouped by a specific attribute.
+
+    Args:
+        results: List of result dictionaries
+        group_by: Column to group by ("method", "crop", "sequence")
+
+    Returns:
+        pandas DataFrame
+    """
+    df = pd.DataFrame(results)
+
+    if df.empty:
+        print("No results found!")
+        return df
+
+    # Group and compute statistics
+    if "mean_cd" in df.columns:
+        grouped = df.groupby(group_by).agg(
+            {
+                "mean_cd": ["mean", "std", "min", "max", "count"],
+                "mean_epe": (
+                    ["mean", "std", "min", "max"] if "mean_epe" in df.columns else []
+                ),
+            }
+        )
+        return grouped
+    else:
+        return df
+
+
+def export_to_latex(df, output_file="results_table.tex"):
+    """Export results to LaTeX table format."""
+    latex_str = df.to_latex(
+        float_format="%.6f",
+        caption="Quantitative Results",
+        label="tab:results",
+    )
+
+    with open(output_file, "w") as f:
+        f.write(latex_str)
+
+    print(f"LaTeX table saved to: {output_file}")
+
+
+def export_to_csv(df, output_file="results.csv"):
+    """Export results to CSV format."""
+    df.to_csv(output_file)
+    print(f"CSV file saved to: {output_file}")
+
+
+def print_summary_stats(results):
+    """Print summary statistics."""
+    df = pd.DataFrame(results)
+
+    if df.empty:
+        print("No results found!")
+        return
+
+    print("\n" + "=" * 80)
+    print("SUMMARY STATISTICS")
+    print("=" * 80)
+
+    if "mean_cd" in df.columns:
+        print(f"\nTotal experiments: {len(df)}")
+        print(f"\nChamfer Distance (CD):")
+        print(f"  Mean: {df['mean_cd'].mean():.6f} ± {df['mean_cd'].std():.6f}")
+        print(f"  Min:  {df['mean_cd'].min():.6f}")
+        print(f"  Max:  {df['mean_cd'].max():.6f}")
+
+        if "mean_epe" in df.columns and df["mean_epe"].notna().any():
+            print(f"\nEnd Point Error (EPE):")
+            print(f"  Mean: {df['mean_epe'].mean():.6f} ± {df['mean_epe'].std():.6f}")
+            print(f"  Min:  {df['mean_epe'].min():.6f}")
+            print(f"  Max:  {df['mean_epe'].max():.6f}")
+
+    # Group by method
+    if "method" in df.columns:
+        print("\n" + "-" * 80)
+        print("RESULTS BY METHOD")
+        print("-" * 80)
+        method_stats = create_comparison_table(results, group_by="method")
+        print(method_stats)
+
+    # Group by crop
+    if "crop" in df.columns:
+        print("\n" + "-" * 80)
+        print("RESULTS BY CROP")
+        print("-" * 80)
+        crop_stats = create_comparison_table(results, group_by="crop")
+        print(crop_stats)
+
+    # Best/worst experiments
+    if "mean_cd" in df.columns:
+        print("\n" + "-" * 80)
+        print("BEST EXPERIMENTS (by Chamfer Distance)")
+        print("-" * 80)
+        best_df = df.nsmallest(5, "mean_cd")[
+            ["experiment", "method", "crop", "sequence", "mean_cd", "std_cd"]
+        ]
+        print(best_df.to_string(index=False))
+
+        print("\n" + "-" * 80)
+        print("WORST EXPERIMENTS (by Chamfer Distance)")
+        print("-" * 80)
+        worst_df = df.nlargest(5, "mean_cd")[
+            ["experiment", "method", "crop", "sequence", "mean_cd", "std_cd"]
+        ]
+        print(worst_df.to_string(index=False))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aggregate metrics from multiple experiments"
+    )
+    parser.add_argument(
+        "--base_dir",
+        default="results/pheno4d",
+        help="Base results directory",
+    )
+    parser.add_argument(
+        "--epoch",
+        type=int,
+        default=15000,
+        help="Specific epoch to collect (default: use summary or latest)",
+    )
+    parser.add_argument(
+        "--metric_type",
+        choices=["eval", "training"],
+        default="eval",
+        help="Type of metrics to collect",
+    )
+    parser.add_argument(
+        "--export_csv",
+        action="store_true",
+        help="Export results to CSV",
+    )
+    parser.add_argument(
+        "--export_latex",
+        action="store_true",
+        help="Export results to LaTeX table",
+    )
+    parser.add_argument(
+        "--output_prefix",
+        default="results",
+        help="Prefix for output files",
+    )
+
+    args = parser.parse_args()
+
+    print(f"Collecting metrics from: {args.base_dir}")
+    print(f"Epoch: {args.epoch if args.epoch else 'latest/summary'}")
+    print(f"Metric type: {args.metric_type}")
+
+    # Collect results
+    results = collect_metrics_from_experiments(
+        base_dir=args.base_dir,
+        epoch=args.epoch,
+        metric_type=args.metric_type,
+    )
+
+    if not results:
+        print("No metrics found!")
+        return
+
+    print(f"\nFound {len(results)} experiments with metrics")
+
+    # Print summary statistics
+    print_summary_stats(results)
+
+    # Export if requested
+    df = pd.DataFrame(results)
+
+    if args.export_csv:
+        csv_file = f"{args.output_prefix}.csv"
+        export_to_csv(df, csv_file)
+
+    if args.export_latex:
+        # Create different tables for different groupings
+        latex_file_method = f"{args.output_prefix}_by_method.tex"
+        latex_file_crop = f"{args.output_prefix}_by_crop.tex"
+
+        method_table = create_comparison_table(results, group_by="method")
+        if not method_table.empty:
+            export_to_latex(method_table, latex_file_method)
+
+        if "crop" in df.columns:
+            crop_table = create_comparison_table(results, group_by="crop")
+            if not crop_table.empty:
+                export_to_latex(crop_table, latex_file_crop)
+
+
+if __name__ == "__main__":
+    main()
