@@ -382,21 +382,27 @@ class Decoder(nn.Module):
     def __init__(self,methods,latent_size,warper_kargs,decoder_kargs):
         super(Decoder, self).__init__()
         self.methods = methods
-        if methods == "TPSR":
+        # Extract base method name (remove _woAdaptor suffix if present)
+        base_method = methods.replace("_woAdaptor", "")
+
+        if base_method == "TPSR":
             self.warper = Warper_multi(latent_size, **warper_kargs)
-        
-        elif methods == "NVFI" or methods == "OF4D" or methods=="4DSDF":
-            self.warper = Warper(methods)  
-        if methods=="4DSDF":
+
+        elif base_method in ["NVFI", "OF4D", "4DSDF"]:
+            self.warper = Warper(base_method)
+        if base_method == "4DSDF":
             self.sdf_decoder = SdfDecoder(**decoder_kargs,input_dims=4)
         else:
 
-            self.sdf_decoder = DiGSNetwork(in_dim=3,out_dim=1, 
+            self.sdf_decoder = DiGSNetwork(in_dim=3,out_dim=1,
                                        decoder_hidden_dim=256,nl="sine",
                                        decoder_n_hidden_layers=8, init_type='siren',
                                        sphere_init_params=[1.6,0.1])
-            
+
         self.partseg = PartNet(hidden_features=128,out_features=20,in_features=3,num_hidden_layers=1,initial_first=True)
+
+        # Store base method for forward pass
+        self.base_method = base_method
     def forward(self, inputs,temp_time=0.5,requires_grad=False):
         outputs = {}
         outputs["gt_nms"] = inputs['nms'].cuda()
@@ -407,7 +413,7 @@ class Decoder(nn.Module):
             self.warper.turoff_grad()
         
         p_final  = self.warper(outputs['pts'], inputs["normed_time"],temp_time)
-        if self.methods=="4DSDF":
+        if self.base_method == "4DSDF":
             outputs['mns_preds']  = self.sdf_decoder.forward_unit(p_final,inputs["normed_time"])
         else:
             outputs['mns_preds']  = self.sdf_decoder.forward_unit(p_final)
@@ -419,7 +425,7 @@ class Decoder(nn.Module):
         outputs['near_pts'] = inputs["sald_sps"].cuda()
         
         near_final  = self.warper(outputs['near_pts'], inputs["normed_time"],temp_time)
-        if self.methods=="4DSDF":
+        if self.base_method == "4DSDF":
             outputs['near_preds']  = self.sdf_decoder.forward_unit(near_final,inputs["normed_time"])
         else:
             outputs['near_preds']  = self.sdf_decoder.forward_unit(near_final)
@@ -428,7 +434,7 @@ class Decoder(nn.Module):
         # ELk uniform sampling predict
         outputs['uniform_pts'] = inputs["non_mnpts"].cuda()
         uniform_final  = self.warper(outputs['uniform_pts'], inputs["normed_time"],temp_time)
-        if self.methods == "4DSDF":
+        if self.base_method == "4DSDF":
             outputs['uniform_preds']  = self.sdf_decoder.forward_unit(uniform_final,inputs["normed_time"])
         else:
             outputs['uniform_preds']  = self.sdf_decoder.forward_unit(uniform_final)

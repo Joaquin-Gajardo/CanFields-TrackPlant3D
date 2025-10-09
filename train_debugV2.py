@@ -74,6 +74,9 @@ def velocity_test():
     ############### Logging and Wandb ########################
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # Extract base method name (remove _woAdaptor suffix if present) for directory naming and wandb
+    base_method = args.methods.replace("_woAdaptor", "")
+
     # Extract crop and sequence name from object_name path
     # For pheno4d: Pheno4D/processed/v1/organ_sequences/tomato/name -> crop=tomato, name=name
     # For others: use object_name as-is for backwards compatibility
@@ -87,7 +90,7 @@ def velocity_test():
         experiment_directory = os.path.join(
             args.base_results_dir,
             args.dataset_name,
-            args.methods,
+            base_method,  # Use base method name (without _woAdaptor suffix)
             crop,
             sequence_name,
             timestamped_exp_name,
@@ -100,7 +103,7 @@ def velocity_test():
             args.base_results_dir,
             args.dataset_name,
             object_name,
-            args.methods,
+            base_method,  # Use base method name (without _woAdaptor suffix)
             timestamped_exp_name,
         )
     os.makedirs(experiment_directory, exist_ok=True)
@@ -110,8 +113,8 @@ def velocity_test():
         "dataset_name": args.dataset_name,
         "object_name": object_name,
         "obj_name": obj_name,
-        "methods": args.methods,
-        "adjust_use": args.adjust_use,
+        "method": base_method,  # Base method name without suffix
+        "use_adaptor": args.adjust_use == "True",  # Boolean flag
         "adjust_weights": args.adjust_weights if args.adjust_use == "True" else None,
         "clip": args.clip,
         "epoch_velo": args.epoch_velo,
@@ -204,7 +207,7 @@ def velocity_test():
             mean_time = np.array(times).mean()
             logging.info("computed_time_per100 = {}".format(100 * mean_time))
             times = []
-        if epoch % 100 == 0 or epoch == num_epochs - 1:  # 200
+        if epoch % 5000 == 0 or epoch == num_epochs - 1:  # 200
             trainer.save_model(epoch, experiment_directory)
 
 

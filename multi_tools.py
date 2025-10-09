@@ -56,7 +56,8 @@ def build_args():
         default="ode_solve",
         dest="methods",
         required=False,
-        help="method name (default: ode_solve). Other options: 4DSDF,TPSR,NVFI,4DGF",
+        choices=["ode_solve", "4DSDF", "TPSR", "NVFI", "OF4D"],
+        help="method name (default: ode_solve). Available methods: ode_solve (CanFields), 4DSDF, TPSR, NVFI, OF4D",
     )
     arg_parser.add_argument(
         "--multi_ode",
