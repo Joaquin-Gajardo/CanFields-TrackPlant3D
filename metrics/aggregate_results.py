@@ -160,6 +160,56 @@ def create_comparison_table(results, group_by="method"):
         return df
 
 
+def create_method_by_crop_table(results):
+    """
+    Create a pivot table with methods in rows and crops in columns.
+    Each crop has two subcolumns: CD and EPE.
+
+    Args:
+        results: List of result dictionaries
+
+    Returns:
+        pandas DataFrame with MultiIndex columns
+    """
+    df = pd.DataFrame(results)
+
+    if df.empty:
+        print("No results found!")
+        return df
+
+    # Need mean_cd and mean_epe
+    if "mean_cd" not in df.columns or "mean_epe" not in df.columns:
+        print("Missing required columns (mean_cd, mean_epe)")
+        return pd.DataFrame()
+
+    # Group by method and crop, taking the mean of metrics
+    # (in case there are multiple experiments per method-crop combination)
+    grouped = df.groupby(["method", "crop"]).agg(
+        {"mean_cd": "mean", "mean_epe": "mean"}
+    ).reset_index()
+
+    # Create pivot table for CD
+    cd_pivot = grouped.pivot(index="method", columns="crop", values="mean_cd")
+
+    # Create pivot table for EPE
+    epe_pivot = grouped.pivot(index="method", columns="crop", values="mean_epe")
+
+    # Combine into a MultiIndex DataFrame
+    # Create a list to hold all column data
+    result_data = {}
+    for crop in cd_pivot.columns:
+        result_data[(crop, "CD")] = cd_pivot[crop]
+        result_data[(crop, "EPE")] = epe_pivot[crop]
+
+    # Create DataFrame with MultiIndex columns
+    result = pd.DataFrame(result_data)
+
+    # Sort columns by crop name
+    result = result.sort_index(axis=1, level=0)
+
+    return result
+
+
 def export_to_latex(df, output_file="results_table.tex"):
     """Export results to LaTeX table format."""
     latex_str = df.to_latex(
@@ -170,6 +220,79 @@ def export_to_latex(df, output_file="results_table.tex"):
 
     with open(output_file, "w") as f:
         f.write(latex_str)
+
+    print(f"LaTeX table saved to: {output_file}")
+
+
+def export_method_by_crop_to_latex(df, output_file="results_method_by_crop.tex"):
+    """Export method-by-crop pivot table to a well-formatted LaTeX table."""
+    if df.empty:
+        return
+
+    # Get list of crops (level 0 of columns)
+    crops = df.columns.get_level_values(0).unique()
+    num_crops = len(crops)
+
+    # Start building the LaTeX table
+    lines = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"\centering")
+    lines.append(r"\caption{Quantitative Results}")
+    lines.append(r"\label{tab:results}")
+
+    # Create column specification: l for method, then rr for each crop (CD, EPE)
+    col_spec = "l" + "rr" * num_crops
+    lines.append(r"\begin{tabular}{" + col_spec + "}")
+    lines.append(r"\toprule")
+
+    # Header row: crop names with multicolumn
+    header_parts = [" "]
+    cmidrule_parts = []
+    col_idx = 2  # Start at column 2 (column 1 is Method)
+    for crop in crops:
+        # Capitalize crop name
+        crop_name = crop.capitalize()
+        header_parts.append(rf"\multicolumn{{2}}{{c}}{{{crop_name}}}")
+        # Add cmidrule for this crop's columns
+        cmidrule_parts.append(rf"\cmidrule(lr){{{col_idx}-{col_idx+1}}}")
+        col_idx += 2
+
+    lines.append(" & " + " & ".join(header_parts[1:]) + r" \\")
+    lines.append(" ".join(cmidrule_parts))
+
+    # Subheader row: CD and EPE
+    subheader_parts = ["Method"]
+    for _ in crops:
+        subheader_parts.extend(["CD", "EPE"])
+    lines.append(" & ".join(subheader_parts) + r" \\")
+    lines.append(r"\midrule")
+
+    # Data rows
+    for method in df.index:
+        # Format method name
+        if method == "ode_solve":
+            method_name = "ODE-Solve"
+        else:
+            method_name = method
+
+        row_parts = [method_name]
+        for crop in crops:
+            cd_val = df.loc[method, (crop, "CD")]
+            epe_val = df.loc[method, (crop, "EPE")]
+            # Format to 2 decimal places
+            row_parts.append(f"{cd_val:.2f}")
+            row_parts.append(f"{epe_val:.2f}")
+
+        lines.append(" & ".join(row_parts) + r" \\")
+
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabular}")
+    lines.append(r"\end{table}")
+
+    # Write to file
+    with open(output_file, "w") as f:
+        f.write("\n".join(lines))
+        f.write("\n")
 
     print(f"LaTeX table saved to: {output_file}")
 
@@ -220,6 +343,15 @@ def print_summary_stats(results):
         print("-" * 80)
         crop_stats = create_comparison_table(results, group_by="crop")
         print(crop_stats)
+
+    # Method by crop pivot table
+    if "method" in df.columns and "crop" in df.columns:
+        print("\n" + "-" * 80)
+        print("RESULTS: METHOD (rows) × CROP (columns)")
+        print("-" * 80)
+        method_crop_table = create_method_by_crop_table(results)
+        if not method_crop_table.empty:
+            print(method_crop_table)
 
     # Best/worst experiments
     if "mean_cd" in df.columns:
@@ -276,6 +408,11 @@ def main():
         default="results",
         help="Prefix for output files",
     )
+    parser.add_argument(
+        "--output_suffix",
+        default="",
+        help="Suffix for output files (e.g., '_epoch15000')",
+    )
 
     args = parser.parse_args()
 
@@ -303,13 +440,14 @@ def main():
     df = pd.DataFrame(results)
 
     if args.export_csv:
-        csv_file = f"{args.output_prefix}.csv"
+        csv_file = f"{args.output_prefix}{args.output_suffix}.csv"
         export_to_csv(df, csv_file)
 
     if args.export_latex:
         # Create different tables for different groupings
-        latex_file_method = f"{args.output_prefix}_by_method.tex"
-        latex_file_crop = f"{args.output_prefix}_by_crop.tex"
+        latex_file_method = f"{args.output_prefix}_by_method{args.output_suffix}.tex"
+        latex_file_crop = f"{args.output_prefix}_by_crop{args.output_suffix}.tex"
+        latex_file_method_crop = f"{args.output_prefix}_method_by_crop{args.output_suffix}.tex"
 
         method_table = create_comparison_table(results, group_by="method")
         if not method_table.empty:
@@ -319,6 +457,11 @@ def main():
             crop_table = create_comparison_table(results, group_by="crop")
             if not crop_table.empty:
                 export_to_latex(crop_table, latex_file_crop)
+
+        # Create method-by-crop pivot table
+        method_crop_table = create_method_by_crop_table(results)
+        if not method_crop_table.empty:
+            export_method_by_crop_to_latex(method_crop_table, latex_file_method_crop)
 
 
 if __name__ == "__main__":
