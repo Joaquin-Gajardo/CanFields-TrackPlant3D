@@ -211,7 +211,7 @@ def velocity_test():
             trainer.save_model(epoch, experiment_directory)
 
         # Compute and save metrics periodically (every 5000 epochs or at the end)
-        if epoch % 5000 == 0 or epoch == num_epochs:
+        if epoch % 5000 == 0 or epoch == num_epochs - 1:
             try:
                 metrics_dict = trainer.compute_and_save_metrics(epoch)
                 if metrics_dict:

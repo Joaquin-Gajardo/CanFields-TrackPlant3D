@@ -935,7 +935,7 @@ class Trainer:
 
                 with torch.no_grad():
                     # Decode SDF values
-                    sdf_batch = self.decoder.sdf_decoder(batch_pts, None)
+                    sdf_batch = self.decoder.sdf_decoder.evaluate(batch_pts)
                     sdf_values.append(sdf_batch.squeeze())
 
             sdf_values = torch.cat(sdf_values, dim=0)
@@ -1391,7 +1391,7 @@ class Trainer_woadjust:
                 batch_pts.requires_grad = False
 
                 with torch.no_grad():
-                    sdf_batch = self.decoder.sdf_decoder(batch_pts, None)
+                    sdf_batch = self.decoder.sdf_decoder.evaluate(batch_pts)
                     sdf_values.append(sdf_batch.squeeze())
 
             sdf_values = torch.cat(sdf_values, dim=0)
