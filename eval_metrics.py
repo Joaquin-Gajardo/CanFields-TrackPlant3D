@@ -468,7 +468,7 @@ def main():
             "num_epochs_evaluated": len(all_metrics),
             "epochs": [m["epoch"] for m in all_metrics],
             "mean_chamfer_distances": [m["mean_chamfer_distance"] for m in all_metrics],
-            "mean_epe": [m.get("mean_epe", None) for m in all_metrics],
+            "mean_epe": [m.get("mean_tip_epe", None) for m in all_metrics],
             "best_epoch_by_chamfer": min(
                 all_metrics, key=lambda x: x["mean_chamfer_distance"]
             )["epoch"],
