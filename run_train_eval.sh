@@ -27,9 +27,28 @@ echo "Detected $NUM_TIMESTEPS timesteps for $SEQUENCE_NAME (crop: $CROP)"
 # Train CanFields
 python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $EPOCHS --method $METHOD
 
+# Wait for filesystem to sync (helps with NFS)
+echo "Training completed. Waiting 10 seconds for filesystem sync..."
+sync
+sleep 10
+
 # Get the latest experiment directory
 # New path: results/pheno4d/{method}/{crop}/{sequence_name}/
-EXPERIMENT_NAME=$(ls -t results/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME | head -n 1)
+EXPERIMENT_DIR="results/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
+if [ ! -d "$EXPERIMENT_DIR" ]; then
+    echo "ERROR: Experiment directory not found: $EXPERIMENT_DIR"
+    echo "Training may have failed. Skipping evaluation."
+    exit 1
+fi
+
+EXPERIMENT_NAME=$(ls -t "$EXPERIMENT_DIR" 2>/dev/null | head -n 1)
+if [ -z "$EXPERIMENT_NAME" ]; then
+    echo "ERROR: No experiment found in $EXPERIMENT_DIR"
+    echo "Training may have failed. Skipping evaluation."
+    exit 1
+fi
+
+echo "Found experiment: $EXPERIMENT_NAME"
 
 # Eval: create canonical shape
 python eval_sphere.py -d pheno4d -e all -s 1 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD

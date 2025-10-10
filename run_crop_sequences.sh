@@ -84,10 +84,16 @@ for SEQUENCE in ${CROP_SEQUENCES[$CROP]}; do
     echo "-----------------------------------------------------------------"
 
     # Run the training and evaluation script
-    bash run_train_eval.sh "$SEQUENCE_PATH" "$METHOD"
-
-    echo "-----------------------------------------------------------------"
-    echo "[$COUNTER] Completed: $SEQUENCE_NAME"
+    # Continue even if this sequence fails (e.g., due to stale file handle)
+    if bash run_train_eval.sh "$SEQUENCE_PATH" "$METHOD"; then
+        echo "-----------------------------------------------------------------"
+        echo "[$COUNTER] Completed: $SEQUENCE_NAME"
+    else
+        EXIT_CODE=$?
+        echo "-----------------------------------------------------------------"
+        echo "[$COUNTER] FAILED: $SEQUENCE_NAME (exit code: $EXIT_CODE)"
+        echo "    Continuing with next sequence..."
+    fi
 done
 
 echo ""
