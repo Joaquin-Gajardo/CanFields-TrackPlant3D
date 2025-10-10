@@ -451,13 +451,16 @@ def main():
 
     # Compute metrics for each epoch
     all_metrics = []
+    failed_epochs = []
     for epoch_num in epochs:
-        metrics = compute_metrics_for_epoch(args, epoch_num)
-        save_metrics_to_json(metrics, experiment_directory, epoch_num)
-        all_metrics.append(metrics)
-        # except Exception as e:
-        #     logging.error(f"Error computing metrics for epoch {epoch_num}: {e}")
-        #     continue
+        try:
+            metrics = compute_metrics_for_epoch(args, epoch_num)
+            save_metrics_to_json(metrics, experiment_directory, epoch_num)
+            all_metrics.append(metrics)
+        except Exception as e:
+            logging.error(f"Error computing metrics for epoch {epoch_num}: {e}")
+            failed_epochs.append(epoch_num)
+            continue
 
     # Save summary if multiple epochs
     if len(all_metrics) > 1:
@@ -486,7 +489,9 @@ def main():
 
         logging.info(f"Summary saved to: {summary_file}")
 
-    logging.info("Evaluation complete!")
+    logging.info(f"Evaluation complete! Processed {len(all_metrics)} epoch(s) successfully, {len(failed_epochs)} failed")
+    if failed_epochs:
+        logging.warning(f"Failed epochs: {failed_epochs}")
 
 
 if __name__ == "__main__":
