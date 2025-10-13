@@ -259,7 +259,7 @@ def export_method_by_crop_to_latex(df, output_file="results_method_by_crop.tex")
     for method in df.index:
         # Format method name
         if method == "ode_solve":
-            method_name = "ODE-Solve"
+            method_name = "CanFields"
         else:
             method_name = method
 
