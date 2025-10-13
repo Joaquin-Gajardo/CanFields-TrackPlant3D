@@ -128,36 +128,36 @@ def collect_metrics_from_experiments(
     return results
 
 
-def create_comparison_table(results, group_by="method"):
+def filter_by_sequence_type(results, sequence_type):
     """
-    Create a comparison table grouped by a specific attribute.
+    Filter results by sequence type (organs vs full plants).
+
+    Uses underscore-separated parts to determine type:
+    - Full plant: 3 parts (e.g., maize_control_plant1)
+    - Organ: 4+ parts (e.g., maize_control_plant1_leaf1)
 
     Args:
         results: List of result dictionaries
-        group_by: Column to group by ("method", "crop", "sequence")
+        sequence_type: "organs" for organ sequences, "plants" for full plants, None for all
 
     Returns:
-        pandas DataFrame
+        Filtered list of results
     """
-    df = pd.DataFrame(results)
+    if sequence_type is None:
+        return results
 
-    if df.empty:
-        print("No results found!")
-        return df
+    filtered_results = []
+    for result in results:
+        sequence = result.get("sequence", "")
+        parts = sequence.split("_")
+        num_parts = len(parts)
 
-    # Group and compute statistics
-    if "mean_cd" in df.columns:
-        grouped = df.groupby(group_by).agg(
-            {
-                "mean_cd": ["mean", "std", "min", "max", "count"],
-                "mean_epe": (
-                    ["mean", "std", "min", "max"] if "mean_epe" in df.columns else []
-                ),
-            }
-        )
-        return grouped
-    else:
-        return df
+        if sequence_type == "organs" and num_parts >= 4:
+            filtered_results.append(result)
+        elif sequence_type == "plants" and num_parts == 3:
+            filtered_results.append(result)
+
+    return filtered_results
 
 
 def create_method_by_crop_table(results):
@@ -184,9 +184,11 @@ def create_method_by_crop_table(results):
 
     # Group by method and crop, taking the mean of metrics
     # (in case there are multiple experiments per method-crop combination)
-    grouped = df.groupby(["method", "crop"]).agg(
-        {"mean_cd": "mean", "mean_epe": "mean"}
-    ).reset_index()
+    grouped = (
+        df.groupby(["method", "crop"])
+        .agg({"mean_cd": "mean", "mean_epe": "mean"})
+        .reset_index()
+    )
 
     # Create pivot table for CD
     cd_pivot = grouped.pivot(index="method", columns="crop", values="mean_cd")
@@ -208,20 +210,6 @@ def create_method_by_crop_table(results):
     result = result.sort_index(axis=1, level=0)
 
     return result
-
-
-def export_to_latex(df, output_file="results_table.tex"):
-    """Export results to LaTeX table format."""
-    latex_str = df.to_latex(
-        float_format="%.6f",
-        caption="Quantitative Results",
-        label="tab:results",
-    )
-
-    with open(output_file, "w") as f:
-        f.write(latex_str)
-
-    print(f"LaTeX table saved to: {output_file}")
 
 
 def export_method_by_crop_to_latex(df, output_file="results_method_by_crop.tex"):
@@ -328,22 +316,6 @@ def print_summary_stats(results):
             print(f"  Min:  {df['mean_epe'].min():.6f}")
             print(f"  Max:  {df['mean_epe'].max():.6f}")
 
-    # Group by method
-    if "method" in df.columns:
-        print("\n" + "-" * 80)
-        print("RESULTS BY METHOD")
-        print("-" * 80)
-        method_stats = create_comparison_table(results, group_by="method")
-        print(method_stats)
-
-    # Group by crop
-    if "crop" in df.columns:
-        print("\n" + "-" * 80)
-        print("RESULTS BY CROP")
-        print("-" * 80)
-        crop_stats = create_comparison_table(results, group_by="crop")
-        print(crop_stats)
-
     # Method by crop pivot table
     if "method" in df.columns and "crop" in df.columns:
         print("\n" + "-" * 80)
@@ -413,6 +385,17 @@ def main():
         default="",
         help="Suffix for output files (e.g., '_epoch15000')",
     )
+    parser.add_argument(
+        "--filter",
+        choices=["organs", "plants"],
+        default=None,
+        help="Filter by sequence type: 'organs' for organ sequences (4+ parts), 'plants' for full plants (3 parts)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        default="output/tables",
+        help="Output directory for exported files (default: output/tables)",
+    )
 
     args = parser.parse_args()
 
@@ -433,30 +416,40 @@ def main():
 
     print(f"\nFound {len(results)} experiments with metrics")
 
+    # Filter by sequence type if requested
+    if args.filter:
+        results = filter_by_sequence_type(results, args.filter)
+        filter_desc = "organ-specific" if args.filter == "organs" else "full plant"
+        print(f"Filtered to {len(results)} {filter_desc} experiments")
+
+    if not results:
+        print("No results after filtering!")
+        return
+
     # Print summary statistics
     print_summary_stats(results)
 
     # Export if requested
     df = pd.DataFrame(results)
 
+    # Create output directory if needed
+    if args.export_csv or args.export_latex:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\nExporting to directory: {output_dir}")
+
     if args.export_csv:
-        csv_file = f"{args.output_prefix}{args.output_suffix}.csv"
+        csv_file = (
+            output_dir
+            / f"{args.output_prefix}_{args.filter}_epoch{args.epoch}{args.output_suffix}.csv"
+        )
         export_to_csv(df, csv_file)
 
     if args.export_latex:
-        # Create different tables for different groupings
-        latex_file_method = f"{args.output_prefix}_by_method{args.output_suffix}.tex"
-        latex_file_crop = f"{args.output_prefix}_by_crop{args.output_suffix}.tex"
-        latex_file_method_crop = f"{args.output_prefix}_method_by_crop{args.output_suffix}.tex"
-
-        method_table = create_comparison_table(results, group_by="method")
-        if not method_table.empty:
-            export_to_latex(method_table, latex_file_method)
-
-        if "crop" in df.columns:
-            crop_table = create_comparison_table(results, group_by="crop")
-            if not crop_table.empty:
-                export_to_latex(crop_table, latex_file_crop)
+        latex_file_method_crop = (
+            output_dir
+            / f"{args.output_prefix}_method_by_crop_{args.filter}_epoch{args.epoch}{args.output_suffix}.tex"
+        )
 
         # Create method-by-crop pivot table
         method_crop_table = create_method_by_crop_table(results)
