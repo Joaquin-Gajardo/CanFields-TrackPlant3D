@@ -20,6 +20,7 @@ def export_timepoint(
     points: np.ndarray,
     output_path: Path,
     estimate_normals: bool = False,
+    normals: np.ndarray = None,
     labels: np.ndarray = None,
     leaf_tip_idxs: np.ndarray = None,
     include_leaf_tips: bool = True,
@@ -31,6 +32,7 @@ def export_timepoint(
         points: Point cloud array (N, 3) or (N, 6) with normals
         output_path: Output file path
         estimate_normals: If True, estimate normals with Open3D
+        normals: (N, 3) array of normals (optional, takes precedence over points[:, 3:6])
         labels: (N,) array of organ instance labels (optional)
         leaf_tip_idxs: array of indices marking leaf tips (optional)
         include_leaf_tips: Whether to include is_leaf_tip scalar field (only for sparse GT)
@@ -58,20 +60,25 @@ def export_timepoint(
             leaf_tip_mask.reshape(-1, 1), dtype=o3d.core.Dtype.UInt8
         )
 
-    # Handle normals (convert to legacy PointCloud for normal estimation)
-    if estimate_normals:
+    # Handle normals
+    # Priority: 1. Provided normals array, 2. Normals in points array, 3. Estimate if requested
+    if normals is not None:
+        # Use provided normals (from v2 dataset)
+        pcd.point["normals"] = o3d.core.Tensor(normals, dtype=o3d.core.Dtype.Float32)
+    elif points.shape[1] == 6:
+        # Normals concatenated in the points array
+        pcd.point["normals"] = o3d.core.Tensor(
+            points[:, 3:6], dtype=o3d.core.Dtype.Float32
+        )
+    elif estimate_normals:
+        # Estimate normals if requested and not provided
         legacy_pcd = o3d.geometry.PointCloud()
         legacy_pcd.points = o3d.utility.Vector3dVector(points[:, :3])
         legacy_pcd.estimate_normals()
         legacy_pcd.orient_normals_consistent_tangent_plane(k=30)
         legacy_pcd.orient_normals_to_align_with_direction()
-        normals = np.asarray(legacy_pcd.normals)
-        pcd.point["normals"] = o3d.core.Tensor(normals, dtype=o3d.core.Dtype.Float32)
-    elif points.shape[1] == 6:
-        # Normals already in the data
-        pcd.point["normals"] = o3d.core.Tensor(
-            points[:, 3:6], dtype=o3d.core.Dtype.Float32
-        )
+        estimated_normals = np.asarray(legacy_pcd.normals)
+        pcd.point["normals"] = o3d.core.Tensor(estimated_normals, dtype=o3d.core.Dtype.Float32)
 
     # Save point cloud
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +119,7 @@ def export_leaf_sequence(
                 tp["dense_points"],
                 dense_path,
                 estimate_normals,
+                normals=tp.get("dense_normals"),
                 include_leaf_tips=False,  # Dense point clouds don't need leaf tips
             )
 
@@ -135,6 +143,7 @@ def export_leaf_sequence(
                 tp["points"],
                 sparse_path,
                 estimate_normals,
+                normals=tp.get("normals"),
                 leaf_tip_idxs=leaf_tip_idxs,
                 include_leaf_tips=True,
             )
@@ -172,6 +181,7 @@ def export_plant_sequence(
                 tp["dense_points"],
                 dense_path,
                 estimate_normals,
+                normals=tp.get("dense_normals"),
                 labels=tp.get("dense_labels"),
                 include_leaf_tips=False,  # Dense point clouds don't need leaf tips
             )
@@ -184,6 +194,7 @@ def export_plant_sequence(
                 tp["points"],
                 sparse_path,
                 estimate_normals,
+                normals=tp.get("normals"),
                 labels=tp.get("labels"),
                 leaf_tip_idxs=tp.get("leaf_tip_idxs"),
                 include_leaf_tips=True,
