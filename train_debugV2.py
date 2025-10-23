@@ -78,7 +78,7 @@ def velocity_test():
     base_method = args.methods.replace("_woAdaptor", "")
 
     # Extract crop and sequence name from object_name path
-    # For pheno4d: Pheno4D/processed/v1/organ_sequences/tomato/name -> crop=tomato, name=name
+    # For pheno4d: Pheno4D/processed/v2/organ_sequences/tomato/name -> crop=tomato, name=name
     # For others: use object_name as-is for backwards compatibility
     if args.dataset_name == "pheno4d":
         path_parts = args.object_name.split("/")

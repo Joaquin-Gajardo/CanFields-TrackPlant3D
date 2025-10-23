@@ -145,7 +145,7 @@ def main():
     parser.add_argument(
         "--data-dir",
         type=str,
-        default="datasets/Pheno4D/processed/v1",
+        default="datasets/Pheno4D/processed/v2",
         help="Path to processed Pheno4D data",
     )
     parser.add_argument(
@@ -428,7 +428,7 @@ def main():
             )
             print(f"\nTo train on a selected sequence:")
             print(
-                f'  python train.py --object_name "Pheno4D/processed/v1/{seq_type}/{first_crop}/{example_seq["sequence_name"]}"'
+                f'  python train.py --object_name "Pheno4D/processed/v2/{seq_type}/{first_crop}/{example_seq["sequence_name"]}"'
             )
 
 

@@ -17,8 +17,8 @@ plant_sequences/maize/maize_control_plant3
 
 CROP_SEQUENCES[sorghum]="
 plant_sequences/sorghum/sorghum_control_plant1
+plant_sequences/sorghum/sorghum_control_plant2
 plant_sequences/sorghum/sorghum_highlight_plant2
-plant_sequences/sorghum/sorghum_highlight_plant3
 "
 
 CROP_SEQUENCES[tobacco]="
@@ -28,8 +28,8 @@ plant_sequences/tobacco/tobacco_shade_plant3
 "
 
 CROP_SEQUENCES[tomato]="
-plant_sequences/tomato/tomato1_control2_plant2
 plant_sequences/tomato/tomato1_heat_plant3
+plant_sequences/tomato/tomato1_shade_plant1
 plant_sequences/tomato/tomato2_control_plant3
 "
 
@@ -40,23 +40,33 @@ CROP_LEAF_SEQUENCES[maize]="
 organ_sequences/maize/maize_control_plant1_leaf1
 organ_sequences/maize/maize_control_plant1_leaf2
 organ_sequences/maize/maize_control_plant1_leaf3
+organ_sequences/maize/maize_control_plant1_leaf4
 organ_sequences/maize/maize_control_plant2_leaf1
 organ_sequences/maize/maize_control_plant2_leaf2
 organ_sequences/maize/maize_control_plant2_leaf3
 organ_sequences/maize/maize_control_plant2_leaf4
+organ_sequences/maize/maize_control_plant2_leaf5
 organ_sequences/maize/maize_control_plant3_leaf1
 organ_sequences/maize/maize_control_plant3_leaf2
 organ_sequences/maize/maize_control_plant3_leaf3
+organ_sequences/maize/maize_control_plant3_leaf4
 "
 
 CROP_LEAF_SEQUENCES[sorghum]="
 organ_sequences/sorghum/sorghum_control_plant1_leaf1
 organ_sequences/sorghum/sorghum_control_plant1_leaf2
 organ_sequences/sorghum/sorghum_control_plant1_leaf3
+organ_sequences/sorghum/sorghum_control_plant1_leaf4
+organ_sequences/sorghum/sorghum_control_plant2_leaf1
+organ_sequences/sorghum/sorghum_control_plant2_leaf2
+organ_sequences/sorghum/sorghum_control_plant2_leaf3
+organ_sequences/sorghum/sorghum_control_plant2_leaf4
 organ_sequences/sorghum/sorghum_highlight_plant2_leaf1
 organ_sequences/sorghum/sorghum_highlight_plant2_leaf2
-organ_sequences/sorghum/sorghum_highlight_plant3_leaf1
-organ_sequences/sorghum/sorghum_highlight_plant3_leaf2
+organ_sequences/sorghum/sorghum_highlight_plant2_leaf3
+organ_sequences/sorghum/sorghum_highlight_plant2_leaf4
+organ_sequences/sorghum/sorghum_highlight_plant2_leaf5
+organ_sequences/sorghum/sorghum_highlight_plant2_leaf6
 "
 
 CROP_LEAF_SEQUENCES[tobacco]="
@@ -64,31 +74,46 @@ organ_sequences/tobacco/tobacco_control_plant1_leaf1
 organ_sequences/tobacco/tobacco_control_plant1_leaf2
 organ_sequences/tobacco/tobacco_control_plant1_leaf3
 organ_sequences/tobacco/tobacco_control_plant1_leaf4
+organ_sequences/tobacco/tobacco_control_plant1_leaf5
+organ_sequences/tobacco/tobacco_control_plant1_leaf6
 organ_sequences/tobacco/tobacco_control_plant2_leaf1
 organ_sequences/tobacco/tobacco_control_plant2_leaf2
 organ_sequences/tobacco/tobacco_control_plant2_leaf3
 organ_sequences/tobacco/tobacco_control_plant2_leaf4
 organ_sequences/tobacco/tobacco_control_plant2_leaf5
+organ_sequences/tobacco/tobacco_control_plant2_leaf6
+organ_sequences/tobacco/tobacco_control_plant2_leaf7
 organ_sequences/tobacco/tobacco_shade_plant3_leaf1
 organ_sequences/tobacco/tobacco_shade_plant3_leaf2
 organ_sequences/tobacco/tobacco_shade_plant3_leaf3
 organ_sequences/tobacco/tobacco_shade_plant3_leaf4
 organ_sequences/tobacco/tobacco_shade_plant3_leaf5
+organ_sequences/tobacco/tobacco_shade_plant3_leaf6
+organ_sequences/tobacco/tobacco_shade_plant3_leaf7
 "
 
 CROP_LEAF_SEQUENCES[tomato]="
-organ_sequences/tomato/tomato1_control2_plant2_leaf1
-organ_sequences/tomato/tomato1_control2_plant2_leaf2
-organ_sequences/tomato/tomato1_control2_plant2_leaf3
-organ_sequences/tomato/tomato1_control2_plant2_leaf4
-organ_sequences/tomato/tomato1_control2_plant2_leaf5
 organ_sequences/tomato/tomato1_heat_plant3_leaf1
 organ_sequences/tomato/tomato1_heat_plant3_leaf2
 organ_sequences/tomato/tomato1_heat_plant3_leaf3
+organ_sequences/tomato/tomato1_heat_plant3_leaf4
+organ_sequences/tomato/tomato1_shade_plant1_leaf1
+organ_sequences/tomato/tomato1_shade_plant1_leaf2
+organ_sequences/tomato/tomato1_shade_plant1_leaf3
+organ_sequences/tomato/tomato1_shade_plant1_leaf4
+organ_sequences/tomato/tomato1_shade_plant1_leaf5
+organ_sequences/tomato/tomato1_shade_plant1_leaf6
+organ_sequences/tomato/tomato1_shade_plant1_leaf7
+organ_sequences/tomato/tomato1_shade_plant1_leaf8
 organ_sequences/tomato/tomato2_control_plant3_leaf1
 organ_sequences/tomato/tomato2_control_plant3_leaf2
 organ_sequences/tomato/tomato2_control_plant3_leaf3
 organ_sequences/tomato/tomato2_control_plant3_leaf4
+organ_sequences/tomato/tomato2_control_plant3_leaf5
+organ_sequences/tomato/tomato2_control_plant3_leaf6
+organ_sequences/tomato/tomato2_control_plant3_leaf7
+organ_sequences/tomato/tomato2_control_plant3_leaf8
+organ_sequences/tomato/tomato2_control_plant3_leaf9
 "
 
 # Get crop name, method, and type from arguments
@@ -130,7 +155,7 @@ fi
 # Validate all paths exist
 for SEQUENCE in $SEQUENCES; do
     [ -z "$SEQUENCE" ] && continue
-    SEQUENCE_PATH="datasets/Pheno4D/processed/v1/$SEQUENCE"
+    SEQUENCE_PATH="datasets/Pheno4D/processed/v2/$SEQUENCE"
     if [ ! -d "$SEQUENCE_PATH" ]; then
         echo "Error: Path does not exist: $SEQUENCE_PATH"
         exit 1
@@ -151,7 +176,7 @@ for SEQUENCE in $SEQUENCES; do
     fi
 
     COUNTER=$((COUNTER + 1))
-    SEQUENCE_PATH="datasets/Pheno4D/processed/v1/$SEQUENCE"
+    SEQUENCE_PATH="datasets/Pheno4D/processed/v2/$SEQUENCE"
     SEQUENCE_NAME=$(basename $SEQUENCE)
 
     echo ""

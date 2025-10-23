@@ -280,7 +280,11 @@ def load_model_latents(args, epoch_num):
         # Use the object_name as the dataset path
         specs["ShapePath"] = args.object_name
         sdf_dataset = data_pheno4d.DeformSamples(
-            specs["ShapePath"], start_idx=start_idx, gap=gap, train_step=stride, use_dense=False
+            specs["ShapePath"],
+            start_idx=start_idx,
+            gap=gap,
+            train_step=stride,
+            use_dense=False,
         )
     else:
         raise ValueError(
@@ -292,7 +296,7 @@ def load_model_latents(args, epoch_num):
 
     ### Set paths ###
     # Extract crop and sequence name from object_name path for pheno4d
-    # For pheno4d: Pheno4D/processed/v1/organ_sequences/tomato/{sequence_name}
+    # For pheno4d: Pheno4D/processed/v2/organ_sequences/tomato/{sequence_name}
     # For others: use object_name as-is for backwards compatibility
     if args.dataset_name == "pheno4d":
         path_parts = args.object_name.split("/")
@@ -432,7 +436,9 @@ def load_model_latents(args, epoch_num):
         )
 
 
-def creat_colored_canonic_mesh(decoder, sdf_dataset, start_idx, end_idx, export_path, methods=None):
+def creat_colored_canonic_mesh(
+    decoder, sdf_dataset, start_idx, end_idx, export_path, methods=None
+):
     sw_pts = sdf_dataset.evaluate_train(int(start_idx + end_idx // 2))
     sw_bbox_min = sw_pts.min(0, keepdim=True)[0]
     sw_bbox_max = sw_pts.max(0, keepdim=True)[0]
@@ -650,7 +656,9 @@ if __name__ == "__main__":
                 skipped_count += 1
                 continue
 
-            if args.methods != "ode_solve" and not args.methods.startswith("ode_solve_"):
+            if args.methods != "ode_solve" and not args.methods.startswith(
+                "ode_solve_"
+            ):
                 (
                     sdf_dataset,
                     decoder,

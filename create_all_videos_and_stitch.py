@@ -225,7 +225,7 @@ def create_video_for_sequence(
     print(f"{'='*80}")
 
     # Build the object_name path
-    object_name = f"datasets/Pheno4D/processed/v1/plant_sequences/{crop}/{sequence_name}"
+    object_name = f"datasets/Pheno4D/processed/v2/plant_sequences/{crop}/{sequence_name}"
 
     # Find the experiment folder
     exp_folder = find_latest_experiment(sequence_path)

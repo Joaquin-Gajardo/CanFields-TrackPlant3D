@@ -19,7 +19,7 @@ from tqdm import tqdm
 def export_timepoint(
     points: np.ndarray,
     output_path: Path,
-    estimate_normals: bool = True,
+    estimate_normals: bool = False,
     labels: np.ndarray = None,
     leaf_tip_idxs: np.ndarray = None,
     include_leaf_tips: bool = True,
@@ -39,7 +39,9 @@ def export_timepoint(
         return False
 
     # Create a tensor-based point cloud for saving scalar fields
-    pcd = o3d.t.geometry.PointCloud(o3d.core.Tensor(points[:, :3], dtype=o3d.core.Dtype.Float32))
+    pcd = o3d.t.geometry.PointCloud(
+        o3d.core.Tensor(points[:, :3], dtype=o3d.core.Dtype.Float32)
+    )
 
     # Attach labels as a point property if provided
     if labels is not None:
@@ -67,7 +69,9 @@ def export_timepoint(
         pcd.point["normals"] = o3d.core.Tensor(normals, dtype=o3d.core.Dtype.Float32)
     elif points.shape[1] == 6:
         # Normals already in the data
-        pcd.point["normals"] = o3d.core.Tensor(points[:, 3:6], dtype=o3d.core.Dtype.Float32)
+        pcd.point["normals"] = o3d.core.Tensor(
+            points[:, 3:6], dtype=o3d.core.Dtype.Float32
+        )
 
     # Save point cloud
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +84,7 @@ def export_leaf_sequence(
     output_dir: Path,
     export_dense: bool = True,
     export_sparse: bool = True,
-    estimate_normals: bool = True,
+    estimate_normals: bool = False,
 ):
     """
     Export a single leaf sequence to CanFields format.
@@ -108,7 +112,7 @@ def export_leaf_sequence(
                 tp["dense_points"],
                 dense_path,
                 estimate_normals,
-                include_leaf_tips=False  # Dense point clouds don't need leaf tips
+                include_leaf_tips=False,  # Dense point clouds don't need leaf tips
             )
 
         # Export sparse if requested (with leaf tips)
@@ -132,16 +136,16 @@ def export_leaf_sequence(
                 sparse_path,
                 estimate_normals,
                 leaf_tip_idxs=leaf_tip_idxs,
-                include_leaf_tips=True
+                include_leaf_tips=True,
             )
 
 
 def export_plant_sequence(
     plant_timeseries: dict,
     output_dir: Path,
-    export_dense: bool = True,
     export_sparse: bool = True,
-    estimate_normals: bool = True,
+    export_dense: bool = False,
+    estimate_normals: bool = False,
 ):
     """
     Export a single plant sequence to CanFields format.
@@ -149,8 +153,8 @@ def export_plant_sequence(
     Args:
         plant_timeseries: Plant timeseries dict from PlantSequencesDataset
         output_dir: Output directory for this sequence
-        export_dense: If True, export dense point clouds
         export_sparse: If True, export sparse point clouds
+        export_dense: If True, export dense point clouds
         estimate_normals: If True, estimate and include normals
     """
     sequence_name = plant_timeseries["sequence_name"]
@@ -169,7 +173,7 @@ def export_plant_sequence(
                 dense_path,
                 estimate_normals,
                 labels=tp.get("dense_labels"),
-                include_leaf_tips=False  # Dense point clouds don't need leaf tips
+                include_leaf_tips=False,  # Dense point clouds don't need leaf tips
             )
 
         # Export sparse if requested (with labels and leaf tips)
@@ -182,7 +186,7 @@ def export_plant_sequence(
                 estimate_normals,
                 labels=tp.get("labels"),
                 leaf_tip_idxs=tp.get("leaf_tip_idxs"),
-                include_leaf_tips=True
+                include_leaf_tips=True,
             )
 
 
@@ -199,8 +203,8 @@ def main():
     parser.add_argument(
         "--version",
         type=str,
-        default="v1",
-        help="Dataset version to use (default: v1)",
+        default="v2",
+        help="Dataset version to use (default: v2)",
     )
     parser.add_argument(
         "--output-dir",
@@ -254,8 +258,14 @@ def main():
     parser.add_argument(
         "--estimate-normals",
         action="store_true",
-        default=True,
-        help="Estimate normals for point clouds (default: True)",
+        default=False,
+        help="Estimate normals for point clouds (default: False for v2, which has pre-computed normals)",
+    )
+    parser.add_argument(
+        "--force-estimate-normals",
+        dest="estimate_normals",
+        action="store_true",
+        help="Force normal estimation even if normals are available",
     )
     parser.add_argument(
         "--crop",
@@ -324,7 +334,6 @@ def main():
             version=args.version,
             min_timepoints=args.min_timepoints,
             use_ply=True,
-            alignment_method=None,
             estimate_normals=False,
             auto_download=True,
         )

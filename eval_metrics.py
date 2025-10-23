@@ -47,7 +47,7 @@ def build_args():
         "-o",
         dest="object_name",
         required=True,
-        help="Path to the object sequence (e.g., Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2)",
+        help="Path to the object sequence (e.g., Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2)",
     )
     arg_parser.add_argument(
         "--experiment_name",
@@ -489,7 +489,9 @@ def main():
 
         logging.info(f"Summary saved to: {summary_file}")
 
-    logging.info(f"Evaluation complete! Processed {len(all_metrics)} epoch(s) successfully, {len(failed_epochs)} failed")
+    logging.info(
+        f"Evaluation complete! Processed {len(all_metrics)} epoch(s) successfully, {len(failed_epochs)} failed"
+    )
     if failed_epochs:
         logging.warning(f"Failed epochs: {failed_epochs}")
 

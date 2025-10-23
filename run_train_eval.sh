@@ -1,5 +1,5 @@
 # Get sequence path and method from command line arguments
-SEQUENCE_PATH=${1:-"datasets/Pheno4D/processed/v1/organ_sequences/tomato/tomato2_control_plant2_leaf1"}
+SEQUENCE_PATH=${1:-"datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2_leaf1"}
 METHOD=${2:-"ode_solve"}
 EPOCHS=15000
 echo "Using sequence path: $SEQUENCE_PATH"
