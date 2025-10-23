@@ -98,7 +98,7 @@ python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u
 This steps will automatically download the dataset and prepare the sequences for training.
 ```bash
 # 1. Install plant-shape-analysis package
-pip install --force-reinstall git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git
+pip uninstall plant-shape-analysis -y && pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git
 
 # 2. Prepare dataset (default: version 2, saves both plants and organs sequences, sparse only)
 python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw --output-dir datasets/Pheno4D/processed # Defaults: --version v2 --mode both --export-sparse
