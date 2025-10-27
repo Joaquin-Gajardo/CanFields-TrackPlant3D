@@ -288,6 +288,18 @@ def main():
         action="store_true",
         help="Overwrite existing sequences",
     )
+    parser.add_argument(
+        "--leaf-alignment",
+        action="store_true",
+        default=True,
+        help="Apply alignment to leaf sequences (default: True)",
+    )
+    parser.add_argument(
+        "--no-leaf-alignment",
+        dest="leaf_alignment",
+        action="store_false",
+        help="Don't apply alignment to leaf sequences",
+    )
 
     args = parser.parse_args()
 
@@ -346,6 +358,7 @@ def main():
             min_timepoints=args.min_timepoints,
             use_ply=True,
             estimate_normals=False,
+            apply_alignment=args.leaf_alignment,
             auto_download=True,
         )
         print(
