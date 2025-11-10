@@ -1,0 +1,95 @@
+{
+  "description": "Train/Val/Test splits for TrackPlant3D experiments",
+  "notes": [
+    "Splits are at the plant level to avoid data leakage when stitching leaves together",
+    "Val: 4 plants (15 leaves, 79.2% avg tip coverage) - for hyperparameter tuning and model development",
+    "Test: 8 plants (29 leaves, 78.0% avg tip coverage) - for final evaluation and reporting",
+    "Split ensures both sets have good tip coverage and include treatment conditions"
+  ],
+  "splits": {
+    "val": {
+      "plants": [
+        "maize_control_plant1",
+        "sorghum_control_plant1",
+        "tobacco_control_plant2",
+        "tomato2_control_plant3"
+      ],
+      "sequences": [
+        "maize_control_plant1_leaf1",
+        "maize_control_plant1_leaf2",
+        "maize_control_plant1_leaf3",
+        "sorghum_control_plant1_leaf1",
+        "sorghum_control_plant1_leaf2",
+        "sorghum_control_plant1_leaf3",
+        "tomato2_control_plant3_leaf1",
+        "tomato2_control_plant3_leaf2",
+        "tomato2_control_plant3_leaf3",
+        "tomato2_control_plant3_leaf4",
+        "tobacco_control_plant2_leaf1",
+        "tobacco_control_plant2_leaf2",
+        "tobacco_control_plant2_leaf3",
+        "tobacco_control_plant2_leaf4",
+        "tobacco_control_plant2_leaf5"
+      ],
+      "n_plants": 4,
+      "n_sequences": 15,
+      "avg_tip_coverage": 79.2,
+      "treatments": ["control"]
+    },
+    "test": {
+      "plants": [
+        "maize_control_plant2",
+        "maize_control_plant3",
+        "sorghum_control_plant2",
+        "sorghum_highlight_plant2",
+        "tobacco_control_plant1",
+        "tobacco_shade_plant3",
+        "tomato1_heat_plant3",
+        "tomato1_shade_plant1"
+      ],
+      "sequences": [
+        "maize_control_plant2_leaf1",
+        "maize_control_plant2_leaf2",
+        "maize_control_plant2_leaf3",
+        "maize_control_plant2_leaf4",
+        "maize_control_plant3_leaf1",
+        "maize_control_plant3_leaf2",
+        "maize_control_plant3_leaf3",
+        "sorghum_control_plant2_leaf1",
+        "sorghum_control_plant2_leaf2",
+        "sorghum_control_plant2_leaf3",
+        "sorghum_highlight_plant2_leaf1",
+        "sorghum_highlight_plant2_leaf2",
+        "tobacco_control_plant1_leaf1",
+        "tobacco_control_plant1_leaf2",
+        "tobacco_control_plant1_leaf3",
+        "tobacco_control_plant1_leaf4",
+        "tobacco_shade_plant3_leaf1",
+        "tobacco_shade_plant3_leaf2",
+        "tobacco_shade_plant3_leaf3",
+        "tobacco_shade_plant3_leaf4",
+        "tobacco_shade_plant3_leaf5",
+        "tomato1_heat_plant3_leaf1",
+        "tomato1_heat_plant3_leaf2",
+        "tomato1_heat_plant3_leaf3",
+        "tomato1_shade_plant1_leaf1",
+        "tomato1_shade_plant1_leaf2",
+        "tomato1_shade_plant1_leaf3",
+        "tomato1_shade_plant1_leaf4",
+        "tomato1_shade_plant1_leaf5"
+      ],
+      "n_plants": 8,
+      "n_sequences": 29,
+      "avg_tip_coverage": 78.0,
+      "treatments": ["control", "heat", "shade", "highlight"]
+    }
+  },
+  "statistics": {
+    "total_plants": 12,
+    "total_sequences": 44,
+    "val_ratio_by_plants": 0.333,
+    "test_ratio_by_plants": 0.667,
+    "val_ratio_by_sequences": 0.341,
+    "test_ratio_by_sequences": 0.659
+  }
+}
