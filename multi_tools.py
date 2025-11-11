@@ -1073,6 +1073,7 @@ class Trainer_woadjust:
         self.obj_name = obj_name
         self.args = args
         self.epoch_velo = int(args.epoch_velo)
+        self.experiment_directory = experiment_directory
 
     def load_optimizer(self):
         optimizer_all = torch.optim.Adam(
