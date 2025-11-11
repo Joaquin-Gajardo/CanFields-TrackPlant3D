@@ -3,9 +3,10 @@
 # Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split] [specific_sequence]
 # Example: bash run_crop_sequences.sh maize ode_solve leaf test
 # Example: bash run_crop_sequences.sh maize ode_solve leaf test maize_control_plant1_leaf1
+# Example: bash run_crop_sequences.sh all OF4D plant test  # Run all plant test sequences across all crops
 #
 # Arguments:
-#   crop_name: maize, sorghum, tobacco, tomato
+#   crop_name: maize, sorghum, tobacco, tomato, all (all runs all crops)
 #   method: ode_solve (default), 4DSDF, TPSR, NVFI, OF4D
 #   type: plant, leaf (default: plant)
 #   split: test (default), val, all
@@ -150,12 +151,40 @@ SPECIFIC_SEQUENCE=$5  # Optional: run only this specific sequence
 if [ -z "$CROP" ]; then
     echo "Error: No crop specified"
     echo "Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split] [specific_sequence]"
-    echo "Available crops: maize, sorghum, tobacco, tomato"
+    echo "Available crops: maize, sorghum, tobacco, tomato, all"
     echo "Default method: ode_solve, from options: ode_solve, 4DSDF, TPSR, NVFI, OF4D"
     echo "Default type: plant, from options: plant, leaf"
     echo "Default split: test, from options: test, val, all"
     echo "Optional specific_sequence: run only this specific sequence (e.g., maize_control_plant1_leaf1)"
     exit 1
+fi
+
+# If CROP is "all", expand to all available crops
+if [ "$CROP" == "all" ]; then
+    ALL_CROPS="maize sorghum tobacco tomato"
+    echo "================================================================="
+    echo "Running ${TYPE} sequences for ALL crops: $ALL_CROPS"
+    echo "Using method: $METHOD, split: $SPLIT"
+    echo "================================================================="
+
+    for SINGLE_CROP in $ALL_CROPS; do
+        echo ""
+        echo ">>> Starting crop: $SINGLE_CROP"
+        # Recursively call this script for each crop
+        bash "$0" "$SINGLE_CROP" "$METHOD" "$TYPE" "$SPLIT" "$SPECIFIC_SEQUENCE"
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ">>> FAILED: $SINGLE_CROP (exit code: $EXIT_CODE)"
+        else
+            echo ">>> COMPLETED: $SINGLE_CROP"
+        fi
+    done
+
+    echo ""
+    echo "================================================================="
+    echo "All crops completed!"
+    echo "================================================================="
+    exit 0
 fi
 
 # Validate type parameter
