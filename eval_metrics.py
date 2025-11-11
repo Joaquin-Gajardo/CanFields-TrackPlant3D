@@ -401,6 +401,10 @@ def compute_metrics_for_epoch(args, epoch_num):
 
             logging.info(f"  Train points: pred={len(pred_points_train)}, gt={len(gt_points_train)}")
             logging.info(f"  Test points: pred={len(pred_points_test)}, gt={len(gt_points_test)}")
+
+            # Also create full pred_points_tensor for tip EPE computation (if needed)
+            pred_points_tensor = torch.tensor(pred_points, dtype=torch.float32).cuda()
+            gt_points_tensor = torch.tensor(gt_points, dtype=torch.float32).cuda()
         else:
             # No splits - use all points
             pred_points_tensor = torch.tensor(pred_points, dtype=torch.float32).cuda()
