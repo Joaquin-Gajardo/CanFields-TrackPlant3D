@@ -64,9 +64,34 @@ if seq_type == "leaf":
     print(f"  Stems: {len(stems)}")
 print()
 
+# Check which sequences actually exist
+import os
+existing = []
+missing = []
+for seq in filtered:
+    seq_path = f"datasets/Pheno4D/processed/v2/organ_sequences/{crop}/{seq}"
+    if os.path.exists(seq_path):
+        existing.append(seq)
+    else:
+        missing.append(seq)
+
 print("Sequences to run:")
-for i, seq in enumerate(filtered, 1):
+for i, seq in enumerate(existing, 1):
     print(f"  {i}. {seq}")
+
+if missing:
+    print()
+    print(f"Warning: {len(missing)} sequences in config but not in dataset:")
+    for seq in missing:
+        status = " (stem)" if "stem" in seq else ""
+        print(f"  - {seq}{status}")
+
+print()
+print(f"Summary:")
+print(f"  Total in split: {len(filtered)}")
+print(f"  Available: {len(existing)}")
+if missing:
+    print(f"  Missing: {len(missing)}")
 
 print()
 print(f"Command to run:")

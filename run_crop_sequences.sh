@@ -1,13 +1,15 @@
 #!/bin/bash
 # Script to run all sequences for a given crop
-# Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split]
+# Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split] [specific_sequence]
 # Example: bash run_crop_sequences.sh maize ode_solve leaf test
+# Example: bash run_crop_sequences.sh maize ode_solve leaf test maize_control_plant1_leaf1
 #
 # Arguments:
 #   crop_name: maize, sorghum, tobacco, tomato
 #   method: ode_solve (default), 4DSDF, TPSR, NVFI, OF4D
 #   type: plant, leaf (default: plant)
 #   split: test (default), val, all
+#   specific_sequence: (optional) run only this specific sequence instead of all sequences
 #
 # Sequences match DOMA val+test splits for fair comparison:
 # - Plant sequences: 12 (4 val + 8 test)
@@ -138,19 +140,21 @@ organ_sequences/tomato/tomato2_control_plant3_leaf7
 organ_sequences/tomato/tomato2_control_plant3_stem
 "
 
-# Get crop name, method, type, and split from arguments
+# Get crop name, method, type, split, and specific sequence from arguments
 CROP=$1
 METHOD=${2:-"ode_solve"}
 TYPE=${3:-"plant"}
 SPLIT=${4:-"test"}  # Default to test sequences
+SPECIFIC_SEQUENCE=$5  # Optional: run only this specific sequence
 
 if [ -z "$CROP" ]; then
     echo "Error: No crop specified"
-    echo "Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split]"
+    echo "Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split] [specific_sequence]"
     echo "Available crops: maize, sorghum, tobacco, tomato"
     echo "Default method: ode_solve, from options: ode_solve, 4DSDF, TPSR, NVFI, OF4D"
     echo "Default type: plant, from options: plant, leaf"
     echo "Default split: test, from options: test, val, all"
+    echo "Optional specific_sequence: run only this specific sequence (e.g., maize_control_plant1_leaf1)"
     exit 1
 fi
 
@@ -181,6 +185,31 @@ fi
 if [ -z "$SEQUENCES" ]; then
     echo "Error: No ${TYPE_NAME} sequences defined for crop: $CROP"
     exit 1
+fi
+
+# If a specific sequence was provided, filter to only that sequence
+if [ -n "$SPECIFIC_SEQUENCE" ]; then
+    # Check if the specific sequence exists in the list
+    FOUND=false
+    for SEQUENCE in $SEQUENCES; do
+        [ -z "$SEQUENCE" ] && continue
+        SEQUENCE_NAME=$(basename "$SEQUENCE")
+        if [ "$SEQUENCE_NAME" == "$SPECIFIC_SEQUENCE" ]; then
+            SEQUENCES="$SEQUENCE"
+            FOUND=true
+            break
+        fi
+    done
+
+    if [ "$FOUND" = false ]; then
+        echo "Error: Sequence '$SPECIFIC_SEQUENCE' not found in ${TYPE_NAME} sequences for crop: $CROP"
+        echo "Available sequences:"
+        for SEQUENCE in $SEQUENCES; do
+            [ -z "$SEQUENCE" ] && continue
+            echo "  - $(basename $SEQUENCE)"
+        done
+        exit 1
+    fi
 fi
 
 # Function to check if a sequence is in a specific split
@@ -236,18 +265,43 @@ done
 # Update SEQUENCES to filtered list
 SEQUENCES="$FILTERED_SEQUENCES"
 
-# Validate all paths exist
+# Validate paths exist and filter out missing sequences
+VALID_SEQUENCES=""
+MISSING_COUNT=0
 for SEQUENCE in $SEQUENCES; do
     [ -z "$SEQUENCE" ] && continue
     SEQUENCE_PATH="datasets/Pheno4D/processed/v2/$SEQUENCE"
     if [ ! -d "$SEQUENCE_PATH" ]; then
-        echo "Error: Path does not exist: $SEQUENCE_PATH"
-        exit 1
+        echo "Warning: Skipping missing sequence: $(basename $SEQUENCE)"
+        MISSING_COUNT=$((MISSING_COUNT + 1))
+    else
+        VALID_SEQUENCES="$VALID_SEQUENCES
+$SEQUENCE"
     fi
 done
 
+# Update SEQUENCES to only valid ones
+SEQUENCES="$VALID_SEQUENCES"
+
+# Count valid sequences
+VALID_COUNT=$(echo "$SEQUENCES" | sed '/^$/d' | wc -l)
+
+if [ $VALID_COUNT -eq 0 ]; then
+    echo "Error: No valid sequences found for $CROP $TYPE (split: $SPLIT)"
+    exit 1
+fi
+
+if [ $MISSING_COUNT -gt 0 ]; then
+    echo "Note: Skipped $MISSING_COUNT missing sequences (e.g., stems not in dataset)"
+    echo ""
+fi
+
 echo "================================================================="
-echo "Processing ${SPLIT} ${TYPE_NAME} sequences for crop: $CROP"
+if [ -n "$SPECIFIC_SEQUENCE" ]; then
+    echo "Processing specific ${TYPE_NAME} sequence: $SPECIFIC_SEQUENCE"
+else
+    echo "Processing ${SPLIT} ${TYPE_NAME} sequences for crop: $CROP"
+fi
 echo "Using method: $METHOD"
 echo "================================================================="
 
@@ -283,6 +337,10 @@ done
 
 echo ""
 echo "================================================================="
-echo "All ${TYPE_NAME} sequences for $CROP completed!"
+if [ -n "$SPECIFIC_SEQUENCE" ]; then
+    echo "Specific sequence $SPECIFIC_SEQUENCE completed!"
+else
+    echo "All ${TYPE_NAME} sequences for $CROP completed!"
+fi
 echo "================================================================="
     

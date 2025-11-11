@@ -26,8 +26,9 @@ nvidia-smi
 #bash run_train_eval.sh $1
 
 
-# Run crop sequences with crop name and optional method and type
-# Usage: sbatch run_euler_24GB.sh <crop_name> [method] [type]
-# Example: sbatch run_euler_24GB.sh maize ode_solve plant
-# Example: sbatch run_euler_24GB.sh maize ode_solve leaf
-bash run_crop_sequences.sh $1 $2 $3
+# Run crop sequences with crop name and optional method, type, split, and specific sequence
+# Usage: sbatch run_euler_24GB.sh <crop_name> [method] [type] [split] [specific_sequence]
+# Example: sbatch run_euler_24GB.sh maize ode_solve plant test
+# Example: sbatch run_euler_24GB.sh maize ode_solve leaf test
+# Example: sbatch run_euler_24GB.sh maize ode_solve leaf test maize_control_plant1_leaf1
+bash run_crop_sequences.sh $1 $2 $3 $4 $5
