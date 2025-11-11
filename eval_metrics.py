@@ -346,8 +346,10 @@ def compute_metrics_for_epoch(args, epoch_num):
     else:
         pred_points_list = []
         gt_points_list = []
-        pred_tips_list = []
-        gt_tips_list = []
+
+    # Always initialize tips lists (used regardless of splits)
+    pred_tips_list = []
+    gt_tips_list = []
 
     # Load all meshes and compute per-timestep metrics
     for i, (pred_file, gt_path) in enumerate(zip(pred_files, gt_paths)):
