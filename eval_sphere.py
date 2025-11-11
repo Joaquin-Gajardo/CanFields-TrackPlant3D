@@ -279,12 +279,24 @@ def load_model_latents(args, epoch_num):
 
         # Use the object_name as the dataset path
         specs["ShapePath"] = args.object_name
+
+        # Auto-detect split file to ensure consistent normalization with training
+        # The split file ensures we use the same scale/mean as during training
+        sequence_name = args.object_name.split("/")[-1]
+        split_file = f"configs/point_splits/{sequence_name}_split.json"
+        if not os.path.exists(split_file):
+            logging.warning(f"Point split file not found: {split_file}")
+            logging.warning("Using all points for normalization (may differ from training)")
+            split_file = None
+
         sdf_dataset = data_pheno4d.DeformSamples(
             specs["ShapePath"],
             start_idx=start_idx,
             gap=gap,
             train_step=stride,
             use_dense=False,
+            split_file=split_file,  # Use same split as training for consistent normalization
+            use_train_points=True,  # Use train points (same as training)
         )
     else:
         raise ValueError(

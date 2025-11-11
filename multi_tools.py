@@ -102,6 +102,13 @@ def build_args():
         help="The experiment directory which includes specifications and saved model "
         + "files to use for reconstruction",
     )
+    arg_parser.add_argument(
+        "--point_split_file",
+        dest="point_split_file",
+        default=None,
+        required=False,
+        help="Path to JSON file with train/test point splits (optional, for pheno4d)",
+    )
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
 
@@ -291,7 +298,7 @@ def specs_weights(specs):
     return (latent_reg_weight, grad_loss_weight, grad_on_surface_weight)
 
 
-def load_dataset(args, specs, ajust_coes=None):
+def load_dataset(args, specs, ajust_coes=None, split_file=None, use_train_points=True):
     # load dataset
 
     clip_weights = args.clip.split(",")
@@ -349,7 +356,8 @@ def load_dataset(args, specs, ajust_coes=None):
         gap = clip_coes[1]
         stride = clip_coes[2]
         sdf_dataset = data_pheno4d.DeformSamples(
-            shapepath, start_idx=start_idx, gap=gap, train_step=stride, use_dense=False
+            shapepath, start_idx=start_idx, gap=gap, train_step=stride, use_dense=False,
+            split_file=split_file, use_train_points=use_train_points
         )
         obj_name = (
             shapepath.split("/")[-1]

@@ -59,6 +59,19 @@ def velocity_test():
             f"The variable must be in either animals, medical, defaust, or pheno4d"
         )
 
+    # Auto-construct split file path for pheno4d if not provided
+    split_file = args.point_split_file
+    if args.dataset_name == "pheno4d" and split_file is None:
+        # Extract sequence name from path
+        sequence_name = args.object_name.split("/")[-1]
+        split_file = f"configs/point_splits/{sequence_name}_split.json"
+        if os.path.exists(split_file):
+            logging.info(f"Auto-detected point split file: {split_file}")
+        else:
+            logging.warning(f"Point split file not found: {split_file}")
+            logging.warning("Training will use all points without train/test splitting")
+            split_file = None
+
     # load_dataset
     if args.adjust_use == "True":
         ajust_weights = args.adjust_weights.split(",")
@@ -67,9 +80,9 @@ def velocity_test():
             float(ajust_weights[1]),
             float(ajust_weights[2]),
         ]
-        sdf_dataset, obj_name = load_dataset(args, specs, ajust_coes)
+        sdf_dataset, obj_name = load_dataset(args, specs, ajust_coes, split_file=split_file, use_train_points=True)
     else:
-        sdf_dataset, obj_name = load_dataset(args, specs)
+        sdf_dataset, obj_name = load_dataset(args, specs, split_file=split_file, use_train_points=True)
 
     ############### Logging and Wandb ########################
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -24,8 +24,18 @@ if [ $NUM_TIMESTEPS -eq 0 ]; then
 fi
 echo "Detected $NUM_TIMESTEPS timesteps for $SEQUENCE_NAME (crop: $CROP)"
 
+# Check for point split file
+SPLIT_FILE="configs/point_splits/${SEQUENCE_NAME}_split.json"
+if [ -f "$SPLIT_FILE" ]; then
+    echo "Found point split file: $SPLIT_FILE"
+    SPLIT_ARG="--point_split_file $SPLIT_FILE"
+else
+    echo "No point split file found, will use all points"
+    SPLIT_ARG=""
+fi
+
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $EPOCHS --method $METHOD
+python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $EPOCHS --method $METHOD $SPLIT_ARG
 
 # Wait for filesystem to sync (helps with NFS)
 echo "Training completed. Waiting 10 seconds for filesystem sync..."
@@ -56,5 +66,5 @@ python eval_sphere.py -d pheno4d -e all -s 1 -o $SEQUENCE_PATH -m False --experi
 # Eval: deform canonical shape
 python eval_sphere.py -d pheno4d -e all -s 2 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD
 
-# Eval: compute metrics (Chamfer Distance and EPE)
-python eval_metrics.py -d pheno4d -e all -o $SEQUENCE_PATH --experiment_name $EXPERIMENT_NAME --methods $METHOD
+# Eval: compute metrics (Chamfer Distance and EPE) with point splits
+python eval_metrics.py -d pheno4d -e all -o $SEQUENCE_PATH --experiment_name $EXPERIMENT_NAME --methods $METHOD $SPLIT_ARG

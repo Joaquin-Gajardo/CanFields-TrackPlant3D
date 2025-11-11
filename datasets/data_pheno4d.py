@@ -1,3 +1,4 @@
+import json
 import os
 
 import numpy as np
@@ -7,7 +8,8 @@ import torch
 
 
 class DeformSamples(torch.utils.data.Dataset):
-    def __init__(self, filename, start_idx=0, gap=None, train_step=1, use_dense=False):
+    def __init__(self, filename, start_idx=0, gap=None, train_step=1, use_dense=False,
+                 split_file=None, use_train_points=True):
         """
         Pheno4D dataset loader for plant sequences.
 
@@ -17,6 +19,8 @@ class DeformSamples(torch.utils.data.Dataset):
             gap: Number of consecutive frames to include (None = use all available frames)
             train_step: Sampling step for temporal sequence (1 = all frames, 2 = every other frame, etc.)
             use_dense: Whether to use dense_pc (True) or sparse_pc (False)
+            split_file: Path to JSON file with train/test point splits (optional)
+            use_train_points: If split_file provided, use train points (True) or test points (False)
         """
         pc_folder = "dense_pc" if use_dense else "sparse_pc"
         pc_path = os.path.join(filename, pc_folder)
@@ -74,6 +78,18 @@ class DeformSamples(torch.utils.data.Dataset):
         self.train_xx = []
         self.train_nn = []
         self.normalized_times = []
+
+        # Load point splits if provided
+        self.split_file = split_file
+        self.use_train_points = use_train_points
+        self.point_splits = None
+        if split_file and os.path.exists(split_file):
+            with open(split_file, 'r') as f:
+                self.point_splits = json.load(f)
+            print(f"Loaded point splits from {split_file}")
+            print(f"Using {'train' if use_train_points else 'test'} points for this dataset")
+        elif split_file:
+            print(f"Warning: split_file specified but not found: {split_file}")
 
         min_norm_normal = 1e-5
         train_lens = 0
@@ -148,6 +164,30 @@ class DeformSamples(torch.utils.data.Dataset):
                 if len(x) == 0:
                     print(f"Warning: No valid points in {sub_file}, skipping...")
                     continue
+
+                # Apply point splits if provided
+                if self.point_splits is not None:
+                    # Get the split indices for this timepoint
+                    timepoint_data = self.point_splits['timepoints'][i]
+                    if self.use_train_points:
+                        split_indices = np.array(timepoint_data['train_indices'], dtype=np.int64)
+                    else:
+                        split_indices = np.array(timepoint_data['test_indices'], dtype=np.int64)
+
+                    # Ensure indices are within bounds
+                    split_indices = split_indices[split_indices < len(x)]
+
+                    if len(split_indices) == 0:
+                        print(f"Warning: No valid split indices for {sub_file} timepoint {i}, skipping...")
+                        continue
+
+                    # Apply the split
+                    x = x[split_indices]
+                    n = n[split_indices]
+                    if leaf_tip_mask is not None:
+                        leaf_tip_mask = leaf_tip_mask[split_indices]
+
+                    print(f"  Applied point split to timepoint {i}: {len(split_indices)} points")
 
                 self.train_xx.append(torch.tensor(x))
                 self.train_nn.append(torch.tensor(n))

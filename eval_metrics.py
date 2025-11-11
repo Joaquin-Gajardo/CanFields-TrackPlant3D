@@ -85,6 +85,13 @@ def build_args():
         default=True,
         help="Disable End Point Error (EPE) computation for leaf tips (EPE is computed by default using leaf tips stored in ground truth PLY files)",
     )
+    arg_parser.add_argument(
+        "--point_split_file",
+        dest="point_split_file",
+        default=None,
+        required=False,
+        help="Path to JSON file with train/test point splits (optional, for pheno4d)",
+    )
 
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
@@ -141,6 +148,51 @@ def load_leaf_tips_from_ply(ply_path: str) -> tuple:
     except Exception as e:
         logging.warning(f"Could not load leaf tips from {ply_path}: {e}")
         return np.array([]), np.array([])
+
+
+def load_point_splits(split_file: str) -> dict:
+    """
+    Load pre-computed train/test point splits from JSON file.
+
+    Args:
+        split_file: Path to point split JSON file
+
+    Returns:
+        Dictionary with split information
+    """
+    if not os.path.exists(split_file):
+        logging.warning(f"Point split file not found: {split_file}")
+        return None
+
+    with open(split_file, 'r') as f:
+        splits = json.load(f)
+
+    logging.info(f"Loaded point splits from {split_file}")
+    logging.info(f"  Sequence: {splits['sequence_name']}")
+    logging.info(f"  Timepoints: {splits['n_timepoints']}")
+    logging.info(f"  Train ratio: {splits['train_ratio']}")
+
+    return splits
+
+
+def apply_point_split(points: np.ndarray, split_indices: np.ndarray) -> np.ndarray:
+    """
+    Apply point split indices to a point cloud.
+
+    Args:
+        points: Point cloud array of shape (N, 3)
+        split_indices: Indices to select from points
+
+    Returns:
+        Filtered point cloud
+    """
+    # Ensure indices are within bounds
+    valid_indices = split_indices[split_indices < len(points)]
+    if len(valid_indices) < len(split_indices):
+        logging.warning(
+            f"Some split indices out of bounds: {len(split_indices) - len(valid_indices)} indices removed"
+        )
+    return points[valid_indices]
 
 
 def get_experiment_directory(args):
@@ -241,6 +293,17 @@ def compute_metrics_for_epoch(args, epoch_num):
     if not os.path.exists(pred_mesh_dir):
         raise FileNotFoundError(f"Predicted mesh directory not found: {pred_mesh_dir}")
 
+    # Load point splits if provided (or auto-detect for pheno4d)
+    point_splits = None
+    split_file = args.point_split_file
+    if args.dataset_name == "pheno4d" and split_file is None:
+        # Auto-construct split file path
+        sequence_name = args.object_name.split("/")[-1]
+        split_file = f"configs/point_splits/{sequence_name}_split.json"
+
+    if split_file:
+        point_splits = load_point_splits(split_file)
+
     # Get ground truth paths
     gt_paths, gt_files = get_ground_truth_paths(args)
 
@@ -269,10 +332,22 @@ def compute_metrics_for_epoch(args, epoch_num):
 
     # Initialize metrics
     metrics_calculator = PlantMetrics()
-    pred_points_list = []
-    gt_points_list = []
-    pred_tips_list = []
-    gt_tips_list = []
+
+    # If point splits are provided, maintain separate train/test lists
+    if point_splits:
+        pred_points_train_list = []
+        gt_points_train_list = []
+        pred_points_test_list = []
+        gt_points_test_list = []
+        pred_tips_train_list = []
+        gt_tips_train_list = []
+        pred_tips_test_list = []
+        gt_tips_test_list = []
+    else:
+        pred_points_list = []
+        gt_points_list = []
+        pred_tips_list = []
+        gt_tips_list = []
 
     # Load all meshes and compute per-timestep metrics
     for i, (pred_file, gt_path) in enumerate(zip(pred_files, gt_paths)):
@@ -298,12 +373,41 @@ def compute_metrics_for_epoch(args, epoch_num):
             logging.error(f"Error loading ground truth {gt_path}: {e}")
             continue
 
-        # Convert to tensors
-        pred_points_tensor = torch.tensor(pred_points, dtype=torch.float32).cuda()
-        gt_points_tensor = torch.tensor(gt_points, dtype=torch.float32).cuda()
+        # Apply point splits if provided
+        if point_splits:
+            timepoint_data = point_splits['timepoints'][i]
+            train_indices = np.array(timepoint_data['train_indices'], dtype=np.int64)
+            test_indices = np.array(timepoint_data['test_indices'], dtype=np.int64)
 
-        pred_points_list.append(pred_points_tensor)
-        gt_points_list.append(gt_points_tensor)
+            # Apply splits to GT points
+            gt_points_train = apply_point_split(gt_points, train_indices)
+            gt_points_test = apply_point_split(gt_points, test_indices)
+
+            # For predicted points, we need to use the same split indices
+            # Note: pred_points may have different number of points, so we need to be careful
+            pred_points_train = apply_point_split(pred_points, train_indices)
+            pred_points_test = apply_point_split(pred_points, test_indices)
+
+            # Convert to tensors
+            pred_points_train_tensor = torch.tensor(pred_points_train, dtype=torch.float32).cuda()
+            gt_points_train_tensor = torch.tensor(gt_points_train, dtype=torch.float32).cuda()
+            pred_points_test_tensor = torch.tensor(pred_points_test, dtype=torch.float32).cuda()
+            gt_points_test_tensor = torch.tensor(gt_points_test, dtype=torch.float32).cuda()
+
+            pred_points_train_list.append(pred_points_train_tensor)
+            gt_points_train_list.append(gt_points_train_tensor)
+            pred_points_test_list.append(pred_points_test_tensor)
+            gt_points_test_list.append(gt_points_test_tensor)
+
+            logging.info(f"  Train points: pred={len(pred_points_train)}, gt={len(gt_points_train)}")
+            logging.info(f"  Test points: pred={len(pred_points_test)}, gt={len(gt_points_test)}")
+        else:
+            # No splits - use all points
+            pred_points_tensor = torch.tensor(pred_points, dtype=torch.float32).cuda()
+            gt_points_tensor = torch.tensor(gt_points, dtype=torch.float32).cuda()
+
+            pred_points_list.append(pred_points_tensor)
+            gt_points_list.append(gt_points_tensor)
 
         # Load leaf tips from ground truth PLY file if requested
         if args.compute_tip_epe:
@@ -336,59 +440,98 @@ def compute_metrics_for_epoch(args, epoch_num):
                 gt_tips_list.append(None)
 
     # Compute metrics across all timesteps
-    if args.compute_tip_epe and len(pred_tips_list) > 0 and len(gt_tips_list) > 0:
-        # Filter out None values (timesteps without leaf tips)
-        valid_pred_tips = [t for t in pred_tips_list if t is not None]
-        valid_gt_tips = [t for t in gt_tips_list if t is not None]
+    metrics_json = {
+        "epoch": epoch_num,
+        "num_samples_per_mesh": args.num_samples,
+        "has_point_splits": point_splits is not None,
+    }
 
-        if len(valid_pred_tips) > 0 and len(valid_gt_tips) > 0:
-            metrics = metrics_calculator.compute_metrics_per_timestep(
-                pred_points_list, gt_points_list, valid_pred_tips, valid_gt_tips
-            )
-            logging.info(
-                f"Computing tip EPE for {len(valid_pred_tips)}/{len(pred_tips_list)} timesteps with leaf tips"
-            )
+    if point_splits:
+        # Compute separate train and test metrics
+        logging.info("Computing separate train and test metrics...")
+
+        # Train metrics
+        metrics_train = metrics_calculator.compute_metrics_per_timestep(
+            pred_points_train_list, gt_points_train_list
+        )
+        metrics_json["train"] = {
+            "num_timesteps": len(pred_points_train_list),
+            "mean_chamfer_distance": float(metrics_train["mean_chamfer"].cpu().item()),
+            "std_chamfer_distance": float(metrics_train["std_chamfer"].cpu().item()),
+            "chamfer_distances_per_timestep": [
+                float(cd.cpu().item()) for cd in metrics_train["chamfer_distances"]
+            ],
+        }
+
+        # Test metrics
+        metrics_test = metrics_calculator.compute_metrics_per_timestep(
+            pred_points_test_list, gt_points_test_list
+        )
+        metrics_json["test"] = {
+            "num_timesteps": len(pred_points_test_list),
+            "mean_chamfer_distance": float(metrics_test["mean_chamfer"].cpu().item()),
+            "std_chamfer_distance": float(metrics_test["std_chamfer"].cpu().item()),
+            "chamfer_distances_per_timestep": [
+                float(cd.cpu().item()) for cd in metrics_test["chamfer_distances"]
+            ],
+        }
+
+        # Log results
+        logging.info(f"Train Set - Mean CD: {metrics_json['train']['mean_chamfer_distance']:.6f}")
+        logging.info(f"Train Set - Std CD: {metrics_json['train']['std_chamfer_distance']:.6f}")
+        logging.info(f"Test Set - Mean CD: {metrics_json['test']['mean_chamfer_distance']:.6f}")
+        logging.info(f"Test Set - Std CD: {metrics_json['test']['std_chamfer_distance']:.6f}")
+
+    else:
+        # No splits - compute metrics on all points (backward compatible)
+        if args.compute_tip_epe and len(pred_tips_list) > 0 and len(gt_tips_list) > 0:
+            # Filter out None values (timesteps without leaf tips)
+            valid_pred_tips = [t for t in pred_tips_list if t is not None]
+            valid_gt_tips = [t for t in gt_tips_list if t is not None]
+
+            if len(valid_pred_tips) > 0 and len(valid_gt_tips) > 0:
+                metrics = metrics_calculator.compute_metrics_per_timestep(
+                    pred_points_list, gt_points_list, valid_pred_tips, valid_gt_tips
+                )
+                logging.info(
+                    f"Computing tip EPE for {len(valid_pred_tips)}/{len(pred_tips_list)} timesteps with leaf tips"
+                )
+            else:
+                metrics = metrics_calculator.compute_metrics_per_timestep(
+                    pred_points_list, gt_points_list
+                )
+                logging.warning("No valid leaf tips found, skipping tip EPE computation")
         else:
             metrics = metrics_calculator.compute_metrics_per_timestep(
                 pred_points_list, gt_points_list
             )
-            logging.warning("No valid leaf tips found, skipping tip EPE computation")
-    else:
-        metrics = metrics_calculator.compute_metrics_per_timestep(
-            pred_points_list, gt_points_list
-        )
 
-    # Convert tensors to Python types for JSON serialization
-    metrics_json = {
-        "epoch": epoch_num,
-        "num_timesteps": len(pred_points_list),
-        "num_samples_per_mesh": args.num_samples,
-        "mean_chamfer_distance": float(metrics["mean_chamfer"].cpu().item()),
-        "std_chamfer_distance": float(metrics["std_chamfer"].cpu().item()),
-        "chamfer_distances_per_timestep": [
+        metrics_json["num_timesteps"] = len(pred_points_list)
+        metrics_json["mean_chamfer_distance"] = float(metrics["mean_chamfer"].cpu().item())
+        metrics_json["std_chamfer_distance"] = float(metrics["std_chamfer"].cpu().item())
+        metrics_json["chamfer_distances_per_timestep"] = [
             float(cd.cpu().item()) for cd in metrics["chamfer_distances"]
-        ],
-    }
-
-    # Compute tip EPE if requested and tips were found
-    if args.compute_tip_epe and "mean_epe" in metrics:
-        # Count valid tips (filter out None)
-        valid_tips_count = sum(1 for t in pred_tips_list if t is not None)
-        metrics_json["num_timesteps_with_tips"] = valid_tips_count
-        metrics_json["mean_tip_epe"] = float(metrics["mean_epe"].cpu().item())
-        metrics_json["std_tip_epe"] = float(metrics["std_epe"].cpu().item())
-        metrics_json["tip_epe_per_timestep"] = [
-            float(epe.cpu().item()) for epe in metrics["epe"]
         ]
-    elif args.compute_tip_epe:
-        logging.warning("Tip EPE requested but no leaf tips were found in any timestep")
 
-    # Log results
-    logging.info(f"Mean Chamfer Distance: {metrics_json['mean_chamfer_distance']:.6f}")
-    logging.info(f"Std Chamfer Distance: {metrics_json['std_chamfer_distance']:.6f}")
-    if args.compute_tip_epe and "mean_tip_epe" in metrics_json:
-        logging.info(f"Mean Tip EPE: {metrics_json['mean_tip_epe']:.6f}")
-        logging.info(f"Std Tip EPE: {metrics_json['std_tip_epe']:.6f}")
+        # Compute tip EPE if requested and tips were found
+        if args.compute_tip_epe and "mean_epe" in metrics:
+            # Count valid tips (filter out None)
+            valid_tips_count = sum(1 for t in pred_tips_list if t is not None)
+            metrics_json["num_timesteps_with_tips"] = valid_tips_count
+            metrics_json["mean_tip_epe"] = float(metrics["mean_epe"].cpu().item())
+            metrics_json["std_tip_epe"] = float(metrics["std_epe"].cpu().item())
+            metrics_json["tip_epe_per_timestep"] = [
+                float(epe.cpu().item()) for epe in metrics["epe"]
+            ]
+        elif args.compute_tip_epe:
+            logging.warning("Tip EPE requested but no leaf tips were found in any timestep")
+
+        # Log results
+        logging.info(f"Mean Chamfer Distance: {metrics_json['mean_chamfer_distance']:.6f}")
+        logging.info(f"Std Chamfer Distance: {metrics_json['std_chamfer_distance']:.6f}")
+        if args.compute_tip_epe and "mean_tip_epe" in metrics_json:
+            logging.info(f"Mean Tip EPE: {metrics_json['mean_tip_epe']:.6f}")
+            logging.info(f"Std Tip EPE: {metrics_json['std_tip_epe']:.6f}")
 
     return metrics_json
 
