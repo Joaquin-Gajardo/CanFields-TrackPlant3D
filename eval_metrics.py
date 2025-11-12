@@ -164,7 +164,7 @@ def load_point_splits(split_file: str) -> dict:
         logging.warning(f"Point split file not found: {split_file}")
         return None
 
-    with open(split_file, 'r') as f:
+    with open(split_file, "r") as f:
         splits = json.load(f)
 
     logging.info(f"Loaded point splits from {split_file}")
@@ -377,9 +377,17 @@ def compute_metrics_for_epoch(args, epoch_num):
 
         # Apply point splits if provided
         if point_splits:
-            timepoint_data = point_splits['timepoints'][i]
-            train_indices = np.array(timepoint_data['train_indices'], dtype=np.int64)
-            test_indices = np.array(timepoint_data['test_indices'], dtype=np.int64)
+            timepoint_data = point_splits["timepoints"][i]
+            train_indices = np.array(timepoint_data["train_indices"], dtype=np.int64)
+            test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
+
+            # DEBUG: Verify indices are loaded correctly
+            if i == 0:  # Only print for first timestep
+                logging.info(f"DEBUG: First 10 train indices from split file: {train_indices[:10]}")
+                logging.info(f"DEBUG: First 10 test indices from split file: {test_indices[:10]}")
+                logging.info(f"DEBUG: Total GT points: {len(gt_points)}")
+                logging.info(f"DEBUG: n_train from split file: {timepoint_data.get('n_train', 'N/A')}")
+                logging.info(f"DEBUG: n_test from split file: {timepoint_data.get('n_test', 'N/A')}")
 
             # Apply splits to GT points
             gt_points_train = apply_point_split(gt_points, train_indices)
@@ -391,22 +399,123 @@ def compute_metrics_for_epoch(args, epoch_num):
             pred_points_test = apply_point_split(pred_points, test_indices)
 
             # Convert to tensors
-            pred_points_train_tensor = torch.tensor(pred_points_train, dtype=torch.float32).cuda()
-            gt_points_train_tensor = torch.tensor(gt_points_train, dtype=torch.float32).cuda()
-            pred_points_test_tensor = torch.tensor(pred_points_test, dtype=torch.float32).cuda()
-            gt_points_test_tensor = torch.tensor(gt_points_test, dtype=torch.float32).cuda()
+            pred_points_train_tensor = torch.tensor(
+                pred_points_train, dtype=torch.float32
+            ).cuda()
+            gt_points_train_tensor = torch.tensor(
+                gt_points_train, dtype=torch.float32
+            ).cuda()
+            pred_points_test_tensor = torch.tensor(
+                pred_points_test, dtype=torch.float32
+            ).cuda()
+            gt_points_test_tensor = torch.tensor(
+                gt_points_test, dtype=torch.float32
+            ).cuda()
 
             pred_points_train_list.append(pred_points_train_tensor)
             gt_points_train_list.append(gt_points_train_tensor)
             pred_points_test_list.append(pred_points_test_tensor)
             gt_points_test_list.append(gt_points_test_tensor)
 
-            logging.info(f"  Train points: pred={len(pred_points_train)}, gt={len(gt_points_train)}")
-            logging.info(f"  Test points: pred={len(pred_points_test)}, gt={len(gt_points_test)}")
+            logging.info(
+                f"  Train points: pred={len(pred_points_train)}, gt={len(gt_points_train)}"
+            )
+            logging.info(
+                f"  Test points: pred={len(pred_points_test)}, gt={len(gt_points_test)}"
+            )
 
-            # Also create full pred_points_tensor for tip EPE computation (if needed)
-            pred_points_tensor = torch.tensor(pred_points, dtype=torch.float32).cuda()
-            gt_points_tensor = torch.tensor(gt_points, dtype=torch.float32).cuda()
+            # Load and split leaf tips if requested
+            if args.compute_tip_epe:
+                gt_tip_indices_in_full_cloud, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
+
+                if len(gt_tip_indices_in_full_cloud) > 0:
+
+                    # Separate tips into train and test based on which split they fall into
+                    train_tip_mask = np.isin(
+                        gt_tip_indices_in_full_cloud, train_indices
+                    )
+                    test_tip_mask = np.isin(gt_tip_indices_in_full_cloud, test_indices)
+
+                    # DEBUG: Check which split the tips fall into
+                    n_tips_in_train = train_tip_mask.sum()
+                    n_tips_in_test = test_tip_mask.sum()
+                    logging.info(f"  Timestep {i}: Found {len(gt_tip_coords)} tips total")
+                    logging.info(f"    Tips in train split: {n_tips_in_train}")
+                    logging.info(f"    Tips in test split: {n_tips_in_test}")
+                    if n_tips_in_train > 0:
+                        tip_indices_in_train = gt_tip_indices_in_full_cloud[train_tip_mask]
+                        logging.info(f"    Train tip indices in full cloud: {tip_indices_in_train}")
+                    if n_tips_in_test > 0:
+                        tip_indices_in_test = gt_tip_indices_in_full_cloud[test_tip_mask]
+                        logging.info(f"    Test tip indices in full cloud: {tip_indices_in_test}")
+
+                    train_tip_indices_in_split = []
+                    test_tip_indices_in_split = []
+
+                    # For train tips: find their positions in the train-split array
+                    for tip_idx in gt_tip_indices_in_full_cloud[train_tip_mask]:
+                        pos_in_train = np.where(train_indices == tip_idx)[0]
+                        if len(pos_in_train) > 0:
+                            train_tip_indices_in_split.append(pos_in_train[0])
+
+                    # For test tips: find their positions in the test-split array
+                    for tip_idx in gt_tip_indices_in_full_cloud[test_tip_mask]:
+                        pos_in_test = np.where(test_indices == tip_idx)[0]
+                        if len(pos_in_test) > 0:
+                            test_tip_indices_in_split.append(pos_in_test[0])
+
+                    # Extract GT tips from split point clouds
+                    if len(train_tip_indices_in_split) > 0:
+                        gt_tips_train = gt_points_train[train_tip_indices_in_split]
+                        gt_tips_train_tensor = torch.tensor(
+                            gt_tips_train, dtype=torch.float32
+                        ).cuda()
+
+                        # Find corresponding predicted tips (nearest points)
+                        pred_tips_train_tensor = torch.zeros_like(gt_tips_train_tensor)
+                        for j, gt_tip in enumerate(gt_tips_train_tensor):
+                            distances = torch.norm(
+                                pred_points_train_tensor - gt_tip.unsqueeze(0), dim=1
+                            )
+                            nearest_idx = torch.argmin(distances)
+                            pred_tips_train_tensor[j] = pred_points_train_tensor[
+                                nearest_idx
+                            ]
+
+                        pred_tips_train_list.append(pred_tips_train_tensor)
+                        gt_tips_train_list.append(gt_tips_train_tensor)
+                    else:
+                        pred_tips_train_list.append(None)
+                        gt_tips_train_list.append(None)
+
+                    if len(test_tip_indices_in_split) > 0:
+                        gt_tips_test = gt_points_test[test_tip_indices_in_split]
+                        gt_tips_test_tensor = torch.tensor(
+                            gt_tips_test, dtype=torch.float32
+                        ).cuda()
+
+                        # Find corresponding predicted tips (nearest points)
+                        pred_tips_test_tensor = torch.zeros_like(gt_tips_test_tensor)
+                        for j, gt_tip in enumerate(gt_tips_test_tensor):
+                            distances = torch.norm(
+                                pred_points_test_tensor - gt_tip.unsqueeze(0), dim=1
+                            )
+                            nearest_idx = torch.argmin(distances)
+                            pred_tips_test_tensor[j] = pred_points_test_tensor[
+                                nearest_idx
+                            ]
+
+                        pred_tips_test_list.append(pred_tips_test_tensor)
+                        gt_tips_test_list.append(gt_tips_test_tensor)
+                    else:
+                        pred_tips_test_list.append(None)
+                        gt_tips_test_list.append(None)
+                else:
+                    # No tips in this timestep
+                    pred_tips_train_list.append(None)
+                    gt_tips_train_list.append(None)
+                    pred_tips_test_list.append(None)
+                    gt_tips_test_list.append(None)
         else:
             # No splits - use all points
             pred_points_tensor = torch.tensor(pred_points, dtype=torch.float32).cuda()
@@ -415,35 +524,37 @@ def compute_metrics_for_epoch(args, epoch_num):
             pred_points_list.append(pred_points_tensor)
             gt_points_list.append(gt_points_tensor)
 
-        # Load leaf tips from ground truth PLY file if requested
-        if args.compute_tip_epe:
-            # Load GT leaf tips from PLY file
-            _, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
+            # Load leaf tips from ground truth PLY file if requested (no-split case)
+            if args.compute_tip_epe:
+                # Load GT leaf tips from PLY file
+                _, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
 
-            if len(gt_tip_coords) > 0:
-                # Convert to tensor
-                gt_tips_tensor = torch.tensor(gt_tip_coords, dtype=torch.float32).cuda()
+                if len(gt_tip_coords) > 0:
+                    # Convert to tensor
+                    gt_tips_tensor = torch.tensor(
+                        gt_tip_coords, dtype=torch.float32
+                    ).cuda()
 
-                # For predicted tips, find closest points in predicted mesh to GT tip positions
-                # This assumes predicted and GT are in the same coordinate space
-                pred_tips_tensor = torch.zeros_like(gt_tips_tensor)
-                for j, gt_tip in enumerate(gt_tips_tensor):
-                    # Find nearest point in predicted point cloud
-                    distances = torch.norm(
-                        pred_points_tensor - gt_tip.unsqueeze(0), dim=1
+                    # For predicted tips, find closest points in predicted mesh to GT tip positions
+                    # This assumes predicted and GT are in the same coordinate space
+                    pred_tips_tensor = torch.zeros_like(gt_tips_tensor)
+                    for j, gt_tip in enumerate(gt_tips_tensor):
+                        # Find nearest point in predicted point cloud
+                        distances = torch.norm(
+                            pred_points_tensor - gt_tip.unsqueeze(0), dim=1
+                        )
+                        nearest_idx = torch.argmin(distances)
+                        pred_tips_tensor[j] = pred_points_tensor[nearest_idx]
+
+                    pred_tips_list.append(pred_tips_tensor)
+                    gt_tips_list.append(gt_tips_tensor)
+                else:
+                    logging.warning(
+                        f"No leaf tips found in {gt_path}, skipping EPE for this timestep"
                     )
-                    nearest_idx = torch.argmin(distances)
-                    pred_tips_tensor[j] = pred_points_tensor[nearest_idx]
-
-                pred_tips_list.append(pred_tips_tensor)
-                gt_tips_list.append(gt_tips_tensor)
-            else:
-                logging.warning(
-                    f"No leaf tips found in {gt_path}, skipping EPE for this timestep"
-                )
-                # Add None placeholders to maintain list alignment
-                pred_tips_list.append(None)
-                gt_tips_list.append(None)
+                    # Add None placeholders to maintain list alignment
+                    pred_tips_list.append(None)
+                    gt_tips_list.append(None)
 
     # Compute metrics across all timesteps
     metrics_json = {
@@ -482,40 +593,91 @@ def compute_metrics_for_epoch(args, epoch_num):
             ],
         }
 
-        # Compute EPE for leaf tips if requested and tips were collected
-        if args.compute_tip_epe and len(pred_tips_list) > 0 and len(gt_tips_list) > 0:
-            # Filter out None values (timesteps without leaf tips)
-            valid_pred_tips = [t for t in pred_tips_list if t is not None]
-            valid_gt_tips = [t for t in gt_tips_list if t is not None]
+        # Compute EPE for leaf tips in train split
+        if args.compute_tip_epe:
+            # Train split tips
+            valid_pred_tips_train = [t for t in pred_tips_train_list if t is not None]
+            valid_gt_tips_train = [t for t in gt_tips_train_list if t is not None]
 
-            if len(valid_pred_tips) > 0 and len(valid_gt_tips) > 0:
-                # Compute EPE for all tips (full point cloud was used for tip matching)
-                epe_values = []
-                for pred_tips, gt_tips in zip(valid_pred_tips, valid_gt_tips):
+            if len(valid_pred_tips_train) > 0 and len(valid_gt_tips_train) > 0:
+                epe_train_values = []
+                for pred_tips, gt_tips in zip(
+                    valid_pred_tips_train, valid_gt_tips_train
+                ):
                     epe = torch.norm(pred_tips - gt_tips, dim=-1).mean()
-                    epe_values.append(epe)
+                    epe_train_values.append(epe)
 
-                epe_tensor = torch.stack(epe_values)
-
-                # Note: Tips are computed on full point clouds, not split-specific
-                # This allows us to verify if tips ended up in train or test points
-                metrics_json["leaf_tip_epe"] = {
-                    "num_timesteps_with_tips": len(valid_pred_tips),
-                    "mean_tip_epe": float(epe_tensor.mean().cpu().item()),
-                    "std_tip_epe": float(epe_tensor.std().cpu().item()),
-                    "tip_epe_per_timestep": [float(epe.cpu().item()) for epe in epe_tensor],
-                    "note": "Computed on full point clouds (not split-specific)"
-                }
-
-                logging.info(f"Leaf Tip EPE (full cloud): {metrics_json['leaf_tip_epe']['mean_tip_epe']:.6f}")
+                epe_train_tensor = torch.stack(epe_train_values)
+                metrics_json["train"]["num_timesteps_with_tips"] = len(
+                    valid_pred_tips_train
+                )
+                metrics_json["train"]["mean_tip_epe"] = float(
+                    epe_train_tensor.mean().cpu().item()
+                )
+                metrics_json["train"]["std_tip_epe"] = float(
+                    epe_train_tensor.std().cpu().item()
+                )
+                metrics_json["train"]["tip_epe_per_timestep"] = [
+                    float(epe.cpu().item()) for epe in epe_train_tensor
+                ]
+                logging.info(
+                    f"Train Set - Leaf Tip EPE: {metrics_json['train']['mean_tip_epe']:.6f}"
+                )
             else:
-                logging.warning("No valid leaf tips found, skipping tip EPE computation")
+                metrics_json["train"]["num_timesteps_with_tips"] = 0
+                metrics_json["train"]["mean_tip_epe"] = None
+                metrics_json["train"]["std_tip_epe"] = None
+                metrics_json["train"]["tip_epe_per_timestep"] = []
+                logging.info(
+                    "Train Set - No leaf tips found (expected if tips are in test set)"
+                )
+
+            # Test split tips
+            valid_pred_tips_test = [t for t in pred_tips_test_list if t is not None]
+            valid_gt_tips_test = [t for t in gt_tips_test_list if t is not None]
+
+            if len(valid_pred_tips_test) > 0 and len(valid_gt_tips_test) > 0:
+                epe_test_values = []
+                for pred_tips, gt_tips in zip(valid_pred_tips_test, valid_gt_tips_test):
+                    epe = torch.norm(pred_tips - gt_tips, dim=-1).mean()
+                    epe_test_values.append(epe)
+
+                epe_test_tensor = torch.stack(epe_test_values)
+                metrics_json["test"]["num_timesteps_with_tips"] = len(
+                    valid_pred_tips_test
+                )
+                metrics_json["test"]["mean_tip_epe"] = float(
+                    epe_test_tensor.mean().cpu().item()
+                )
+                metrics_json["test"]["std_tip_epe"] = float(
+                    epe_test_tensor.std().cpu().item()
+                )
+                metrics_json["test"]["tip_epe_per_timestep"] = [
+                    float(epe.cpu().item()) for epe in epe_test_tensor
+                ]
+                logging.info(
+                    f"Test Set - Leaf Tip EPE: {metrics_json['test']['mean_tip_epe']:.6f}"
+                )
+            else:
+                metrics_json["test"]["num_timesteps_with_tips"] = 0
+                metrics_json["test"]["mean_tip_epe"] = None
+                metrics_json["test"]["std_tip_epe"] = None
+                metrics_json["test"]["tip_epe_per_timestep"] = []
+                logging.info("Test Set - No leaf tips found")
 
         # Log results
-        logging.info(f"Train Set - Mean CD: {metrics_json['train']['mean_chamfer_distance']:.6f}")
-        logging.info(f"Train Set - Std CD: {metrics_json['train']['std_chamfer_distance']:.6f}")
-        logging.info(f"Test Set - Mean CD: {metrics_json['test']['mean_chamfer_distance']:.6f}")
-        logging.info(f"Test Set - Std CD: {metrics_json['test']['std_chamfer_distance']:.6f}")
+        logging.info(
+            f"Train Set - Mean CD: {metrics_json['train']['mean_chamfer_distance']:.6f}"
+        )
+        logging.info(
+            f"Train Set - Std CD: {metrics_json['train']['std_chamfer_distance']:.6f}"
+        )
+        logging.info(
+            f"Test Set - Mean CD: {metrics_json['test']['mean_chamfer_distance']:.6f}"
+        )
+        logging.info(
+            f"Test Set - Std CD: {metrics_json['test']['std_chamfer_distance']:.6f}"
+        )
 
     else:
         # No splits - compute metrics on all points (backward compatible)
@@ -535,15 +697,21 @@ def compute_metrics_for_epoch(args, epoch_num):
                 metrics = metrics_calculator.compute_metrics_per_timestep(
                     pred_points_list, gt_points_list
                 )
-                logging.warning("No valid leaf tips found, skipping tip EPE computation")
+                logging.warning(
+                    "No valid leaf tips found, skipping tip EPE computation"
+                )
         else:
             metrics = metrics_calculator.compute_metrics_per_timestep(
                 pred_points_list, gt_points_list
             )
 
         metrics_json["num_timesteps"] = len(pred_points_list)
-        metrics_json["mean_chamfer_distance"] = float(metrics["mean_chamfer"].cpu().item())
-        metrics_json["std_chamfer_distance"] = float(metrics["std_chamfer"].cpu().item())
+        metrics_json["mean_chamfer_distance"] = float(
+            metrics["mean_chamfer"].cpu().item()
+        )
+        metrics_json["std_chamfer_distance"] = float(
+            metrics["std_chamfer"].cpu().item()
+        )
         metrics_json["chamfer_distances_per_timestep"] = [
             float(cd.cpu().item()) for cd in metrics["chamfer_distances"]
         ]
@@ -559,11 +727,17 @@ def compute_metrics_for_epoch(args, epoch_num):
                 float(epe.cpu().item()) for epe in metrics["epe"]
             ]
         elif args.compute_tip_epe:
-            logging.warning("Tip EPE requested but no leaf tips were found in any timestep")
+            logging.warning(
+                "Tip EPE requested but no leaf tips were found in any timestep"
+            )
 
         # Log results
-        logging.info(f"Mean Chamfer Distance: {metrics_json['mean_chamfer_distance']:.6f}")
-        logging.info(f"Std Chamfer Distance: {metrics_json['std_chamfer_distance']:.6f}")
+        logging.info(
+            f"Mean Chamfer Distance: {metrics_json['mean_chamfer_distance']:.6f}"
+        )
+        logging.info(
+            f"Std Chamfer Distance: {metrics_json['std_chamfer_distance']:.6f}"
+        )
         if args.compute_tip_epe and "mean_tip_epe" in metrics_json:
             logging.info(f"Mean Tip EPE: {metrics_json['mean_tip_epe']:.6f}")
             logging.info(f"Std Tip EPE: {metrics_json['std_tip_epe']:.6f}")
