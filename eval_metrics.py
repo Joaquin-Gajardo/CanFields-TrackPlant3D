@@ -3,9 +3,18 @@
 Evaluation script for computing quantitative metrics on 4D plant reconstructions.
 
 Computes:
-- Chamfer Distance (CD) between predicted and ground truth meshes for all timesteps
-- End Point Error (EPE) for leaf tips
+- Chamfer Distance (CD) using PyTorch3D's efficient implementation
+  - Bidirectional squared L2 distance between predicted and GT point clouds
+- Normal Consistency metric
+  - Measures alignment of surface normals between predicted and GT meshes
+  - Score of 1 = perfect alignment, 0 = orthogonal
+- End Point Error (EPE) for leaf tips using warper-based tracking
+  - Tracks tips through time using the learned deformation field
+  - Handles new tips appearing at later timepoints
+  - Much more accurate than nearest-neighbor matching
 - Saves results to JSON files in the experiment directory
+
+Supports train/test splits for separate evaluation on different point subsets.
 """
 
 import argparse
@@ -19,9 +28,11 @@ import open3d as o3d
 import point_cloud_utils as pcu
 import torch
 import trimesh
+from pytorch3d.loss import chamfer_distance
+from pytorch3d.ops import knn_points
 
 from metrics.metrics import PlantMetrics
-from utils import add_common_args, configure_logging
+from utils import add_common_args, configure_logging, load_latent_vectors, load_model_parameters
 
 
 def build_args():
@@ -92,6 +103,20 @@ def build_args():
         required=False,
         help="Path to JSON file with train/test point splits (optional, for pheno4d)",
     )
+    arg_parser.add_argument(
+        "--specifications",
+        "-s",
+        dest="specifications",
+        default="configs/specs.json",
+        help="Path to specs JSON file (required for warper-based tip tracking)",
+    )
+    arg_parser.add_argument(
+        "--no_normal_consistency",
+        dest="compute_normal_consistency",
+        action="store_false",
+        default=True,
+        help="Disable Normal Consistency metric computation (enabled by default)",
+    )
 
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
@@ -99,16 +124,18 @@ def build_args():
     return args
 
 
-def load_mesh_as_points(mesh_path: str, num_samples: int = 10000) -> np.ndarray:
+def load_mesh_as_points(mesh_path: str, num_samples: int = 10000, return_normals: bool = False):
     """
     Load a mesh and sample points from its surface.
 
     Args:
         mesh_path: Path to mesh file (.ply)
         num_samples: Number of points to sample
+        return_normals: If True, also return surface normals at sampled points
 
     Returns:
-        Sampled points as numpy array of shape (num_samples, 3)
+        If return_normals=False: Sampled points as numpy array of shape (num_samples, 3)
+        If return_normals=True: Tuple of (points, normals) each of shape (num_samples, 3)
     """
     if not os.path.exists(mesh_path):
         raise FileNotFoundError(f"Mesh not found: {mesh_path}")
@@ -117,9 +144,15 @@ def load_mesh_as_points(mesh_path: str, num_samples: int = 10000) -> np.ndarray:
     mesh = trimesh.load(mesh_path)
 
     # Sample points uniformly from surface
-    points, _ = trimesh.sample.sample_surface(mesh, num_samples)
+    points, face_indices = trimesh.sample.sample_surface(mesh, num_samples)
 
-    return points
+    if return_normals:
+        # Get normals at the sampled points
+        # Use face normals for the faces that were sampled
+        normals = mesh.face_normals[face_indices]
+        return points, normals
+    else:
+        return points
 
 
 def load_leaf_tips_from_ply(ply_path: str) -> tuple:
@@ -267,6 +300,294 @@ def get_ground_truth_paths(args):
         )
 
 
+def compute_pytorch3d_chamfer_distance(pred_points: torch.Tensor, gt_points: torch.Tensor) -> float:
+    """
+    Compute Chamfer Distance using PyTorch3D's implementation.
+
+    Args:
+        pred_points: Predicted point cloud of shape (N, 3)
+        gt_points: Ground truth point cloud of shape (M, 3)
+
+    Returns:
+        Chamfer distance (sum of bidirectional distances)
+    """
+    # PyTorch3D expects batch dimension
+    pred_batch = pred_points.unsqueeze(0)  # (1, N, 3)
+    gt_batch = gt_points.unsqueeze(0)      # (1, M, 3)
+
+    # chamfer_distance returns (loss1, loss2) where:
+    # loss1: pred->gt distance
+    # loss2: gt->pred distance
+    # Both are already squared L2 distances
+    cd_loss, _ = chamfer_distance(pred_batch, gt_batch)
+
+    return cd_loss.item()
+
+
+def compute_normal_consistency(
+    pred_points: torch.Tensor,
+    pred_normals: torch.Tensor,
+    gt_points: torch.Tensor,
+    gt_normals: torch.Tensor
+) -> float:
+    """
+    Compute Normal Consistency metric between predicted and GT point clouds.
+
+    For each predicted point, find the nearest GT point and compute the
+    absolute dot product between their normals. Average across all points.
+
+    Args:
+        pred_points: Predicted points of shape (N, 3)
+        pred_normals: Predicted normals of shape (N, 3)
+        gt_points: Ground truth points of shape (M, 3)
+        gt_normals: Ground truth normals of shape (M, 3)
+
+    Returns:
+        Normal consistency score (1 = perfect alignment, 0 = orthogonal)
+    """
+    # Add batch dimension for knn_points
+    pred_batch = pred_points.unsqueeze(0)  # (1, N, 3)
+    gt_batch = gt_points.unsqueeze(0)      # (1, M, 3)
+
+    # Find nearest GT point for each predicted point
+    knn_result = knn_points(pred_batch, gt_batch, K=1)
+    nearest_indices = knn_result.idx.squeeze(0).squeeze(-1)  # (N,)
+
+    # Get normals at nearest GT points
+    nearest_gt_normals = gt_normals[nearest_indices]  # (N, 3)
+
+    # Compute dot product between pred and nearest GT normals
+    dot_products = (pred_normals * nearest_gt_normals).sum(dim=-1)  # (N,)
+
+    # Take absolute value and average
+    normal_consistency = torch.abs(dot_products).mean()
+
+    return normal_consistency.item()
+
+
+def load_decoder_model(args, specs, sdf_dataset, epoch_num):
+    """
+    Load the trained decoder model for warper-based tip tracking.
+
+    Args:
+        args: Command line arguments
+        specs: Specifications loaded from JSON
+        sdf_dataset: Dataset object containing normalization parameters
+        epoch_num: Epoch number to load
+
+    Returns:
+        Tuple of (decoder, scale, mean, normalized_times)
+    """
+    from networks.multi_velocity_debug import Decoder, adjust_net
+
+    logging.info("Loading trained decoder model for tip tracking...")
+
+    latent_size = specs["CodeLength"]
+
+    # Create adjustment network
+    ajust = adjust_net().cuda()
+
+    # Create decoder
+    decoder = Decoder(
+        "ode_solve",
+        latent_size,
+        specs["NetworkSpecs"]["warper_kargs"],
+        specs["NetworkSpecs"]["decoder_debug_kargs"],
+    )
+    decoder = decoder.cuda()
+
+    # Create and equip embeddings
+    start_end_vecs = torch.nn.Embedding(2, 128, max_norm=1.0).cuda()
+    decoder.warper.equip_embedding(start_end_vecs)
+
+    # Load model as ModuleList (adjust + decoder)
+    experiment_directory = get_experiment_directory(args)
+    epoch = epoch_num
+
+    composed_model = torch.nn.ModuleList().cuda()
+    composed_model.append(ajust)
+    composed_model.append(decoder)
+
+    load_model_parameters(experiment_directory, epoch, composed_model)
+
+    # Extract decoder after loading
+    ajust = composed_model[0]
+    decoder = composed_model[1]
+
+    load_latent_vectors(experiment_directory, epoch, start_end_vecs)
+
+    decoder.eval()
+    ajust.eval()
+
+    # Set time range
+    start_time = sdf_dataset.normalized_times[0]
+    end_time = sdf_dataset.normalized_times[-1]
+    decoder.warper.split_time(start_time, end_time)
+
+    # Get normalization parameters
+    scale = sdf_dataset.scale
+    mean = sdf_dataset.mean
+
+    logging.info("Decoder model loaded successfully")
+
+    return decoder, scale, mean, sdf_dataset.normalized_times
+
+
+def track_tips_with_warper(
+    decoder,
+    gt_paths,
+    sdf_dataset,
+    scale,
+    mean,
+    normalized_times,
+    point_splits=None
+):
+    """
+    Track leaf tips through time using the learned warper.
+
+    This function:
+    1. Identifies all leaf tips across all timepoints
+    2. Tracks each tip from its first appearance through subsequent timepoints
+    3. Handles new tips appearing at later timepoints
+
+    Args:
+        decoder: Trained decoder with warper
+        gt_paths: List of paths to ground truth PLY files
+        sdf_dataset: Dataset object
+        scale: Normalization scale
+        mean: Normalization mean
+        normalized_times: Tensor of normalized time values for each frame
+        point_splits: Optional dict with train/test splits
+
+    Returns:
+        Dictionary with tracked tips and EPE values per split
+    """
+    logging.info("Tracking leaf tips with warper...")
+
+    # Dictionary to track tips: {tip_id: (first_appear_idx, first_appear_coords, first_appear_time)}
+    tracked_tips = {}
+
+    # Load all GT tips first to identify unique tips
+    all_gt_tips = []
+    for t_idx, gt_path in enumerate(gt_paths):
+        _, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
+        all_gt_tips.append(gt_tip_coords)
+
+        # Initialize tracking for tips appearing at this timepoint
+        if len(gt_tip_coords) > len(tracked_tips):
+            num_new_tips = len(gt_tip_coords) - len(tracked_tips)
+            for i in range(num_new_tips):
+                new_tip_id = len(tracked_tips)
+                new_tip_coord = gt_tip_coords[new_tip_id]
+                tracked_tips[new_tip_id] = (t_idx, new_tip_coord, normalized_times[t_idx])
+                logging.info(f"Initialized tip {new_tip_id} appearing at timepoint {t_idx}")
+
+    # Now track tips through time
+    epe_values_all = []
+    epe_values_train = [] if point_splits else None
+    epe_values_test = [] if point_splits else None
+
+    for t_idx, gt_path in enumerate(gt_paths):
+        target_time = normalized_times[t_idx]
+        gt_tip_coords = all_gt_tips[t_idx]
+
+        if len(gt_tip_coords) == 0:
+            logging.info(f"Timepoint {t_idx}: No GT tips found, skipping")
+            epe_values_all.append(None)
+            if point_splits:
+                epe_values_train.append(None)
+                epe_values_test.append(None)
+            continue
+
+        # Warp all tracked tips to target time
+        warped_tip_coords_list = []
+
+        for tip_id in sorted(tracked_tips.keys()):
+            first_appear_idx, first_appear_coord, first_appear_time = tracked_tips[tip_id]
+
+            if t_idx < first_appear_idx:
+                # Tip hasn't appeared yet
+                continue
+            elif t_idx == first_appear_idx:
+                # Tip just appeared, no warping needed
+                warped_tip_coords_list.append(first_appear_coord)
+            else:
+                # Warp from first appearance to target time
+                tip_coord_normalized = (first_appear_coord - mean.numpy()) * scale.numpy()
+                tip_tensor = torch.from_numpy(tip_coord_normalized.reshape(1, 3)).float().cuda()
+
+                with torch.no_grad():
+                    warped_normalized = decoder.warper(
+                        tip_tensor,
+                        first_appear_time.cuda(),
+                        target_time.cuda()
+                    )
+
+                # Denormalize
+                warped_coord = (warped_normalized[0].cpu().numpy() / scale.numpy()) + mean.numpy()
+                warped_coord = warped_coord.flatten()
+                warped_tip_coords_list.append(warped_coord)
+
+        warped_tip_coords = np.array(warped_tip_coords_list)
+
+        # Compute EPE
+        if len(warped_tip_coords) == len(gt_tip_coords):
+            epe_per_tip = np.linalg.norm(warped_tip_coords - gt_tip_coords, axis=1)
+            mean_epe = epe_per_tip.mean()
+            epe_values_all.append(mean_epe)
+
+            logging.info(
+                f"Timepoint {t_idx}: Tracked {len(warped_tip_coords)} tips, Mean EPE = {mean_epe:.6f}"
+            )
+
+            # Handle splits if provided
+            if point_splits:
+                # Load GT points to check which split tips belong to
+                gt_points, _, _ = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
+                gt_points, _, _ = pcu.deduplicate_point_cloud(gt_points, 1e-15, return_index=True)
+
+                timepoint_data = point_splits["timepoints"][t_idx]
+                train_indices = np.array(timepoint_data["train_indices"], dtype=np.int64)
+                test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
+
+                # Load tip indices from GT
+                gt_tip_indices_in_full_cloud, _ = load_leaf_tips_from_ply(gt_path)
+
+                # Separate tips into train and test
+                train_tip_mask = np.isin(gt_tip_indices_in_full_cloud, train_indices)
+                test_tip_mask = np.isin(gt_tip_indices_in_full_cloud, test_indices)
+
+                # Compute EPE for train tips
+                if train_tip_mask.sum() > 0:
+                    train_epe = epe_per_tip[train_tip_mask].mean()
+                    epe_values_train.append(train_epe)
+                else:
+                    epe_values_train.append(None)
+
+                # Compute EPE for test tips
+                if test_tip_mask.sum() > 0:
+                    test_epe = epe_per_tip[test_tip_mask].mean()
+                    epe_values_test.append(test_epe)
+                else:
+                    epe_values_test.append(None)
+        else:
+            logging.warning(
+                f"Timepoint {t_idx}: Tip count mismatch "
+                f"(warped: {len(warped_tip_coords)}, GT: {len(gt_tip_coords)})"
+            )
+            epe_values_all.append(None)
+            if point_splits:
+                epe_values_train.append(None)
+                epe_values_test.append(None)
+
+    result = {"all": epe_values_all}
+    if point_splits:
+        result["train"] = epe_values_train
+        result["test"] = epe_values_test
+
+    return result
+
+
 def compute_metrics_for_epoch(args, epoch_num):
     """
     Compute metrics for a specific epoch.
@@ -339,6 +660,10 @@ def compute_metrics_for_epoch(args, epoch_num):
         gt_points_train_list = []
         pred_points_test_list = []
         gt_points_test_list = []
+        pred_normals_train_list = [] if args.compute_normal_consistency else None
+        gt_normals_train_list = [] if args.compute_normal_consistency else None
+        pred_normals_test_list = [] if args.compute_normal_consistency else None
+        gt_normals_test_list = [] if args.compute_normal_consistency else None
         pred_tips_train_list = []
         gt_tips_train_list = []
         pred_tips_test_list = []
@@ -346,6 +671,8 @@ def compute_metrics_for_epoch(args, epoch_num):
     else:
         pred_points_list = []
         gt_points_list = []
+        pred_normals_list = [] if args.compute_normal_consistency else None
+        gt_normals_list = [] if args.compute_normal_consistency else None
 
     # Always initialize tips lists (used regardless of splits)
     pred_tips_list = []
@@ -357,20 +684,33 @@ def compute_metrics_for_epoch(args, epoch_num):
 
         logging.info(f"Processing timestep {i+1}/{len(pred_files)}: {pred_file}")
 
-        # Load predicted mesh as points
+        # Load predicted mesh as points (and normals if needed)
         try:
-            pred_points = load_mesh_as_points(pred_path, args.num_samples)
+            if args.compute_normal_consistency:
+                pred_points, pred_normals = load_mesh_as_points(pred_path, args.num_samples, return_normals=True)
+            else:
+                pred_points = load_mesh_as_points(pred_path, args.num_samples, return_normals=False)
+                pred_normals = None
         except Exception as e:
             logging.error(f"Error loading predicted mesh {pred_file}: {e}")
             continue
 
-        # Load ground truth point cloud
+        # Load ground truth point cloud (and normals if needed)
         try:
-            gt_points, _, _ = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
-            # Deduplicate
-            gt_points, _, _ = pcu.deduplicate_point_cloud(
-                gt_points, 1e-15, return_index=True
-            )
+            if args.compute_normal_consistency:
+                gt_points, _, gt_normals = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
+                # Deduplicate points and normals together
+                gt_points, unique_indices, _ = pcu.deduplicate_point_cloud(
+                    gt_points, 1e-15, return_index=True
+                )
+                gt_normals = gt_normals[unique_indices]
+            else:
+                gt_points, _, _ = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
+                # Deduplicate
+                gt_points, _, _ = pcu.deduplicate_point_cloud(
+                    gt_points, 1e-15, return_index=True
+                )
+                gt_normals = None
         except Exception as e:
             logging.error(f"Error loading ground truth {gt_path}: {e}")
             continue
@@ -416,6 +756,23 @@ def compute_metrics_for_epoch(args, epoch_num):
             gt_points_train_list.append(gt_points_train_tensor)
             pred_points_test_list.append(pred_points_test_tensor)
             gt_points_test_list.append(gt_points_test_tensor)
+
+            # Handle normals if needed
+            if args.compute_normal_consistency:
+                gt_normals_train = apply_point_split(gt_normals, train_indices)
+                gt_normals_test = apply_point_split(gt_normals, test_indices)
+                pred_normals_train = apply_point_split(pred_normals, train_indices)
+                pred_normals_test = apply_point_split(pred_normals, test_indices)
+
+                pred_normals_train_tensor = torch.tensor(pred_normals_train, dtype=torch.float32).cuda()
+                gt_normals_train_tensor = torch.tensor(gt_normals_train, dtype=torch.float32).cuda()
+                pred_normals_test_tensor = torch.tensor(pred_normals_test, dtype=torch.float32).cuda()
+                gt_normals_test_tensor = torch.tensor(gt_normals_test, dtype=torch.float32).cuda()
+
+                pred_normals_train_list.append(pred_normals_train_tensor)
+                gt_normals_train_list.append(gt_normals_train_tensor)
+                pred_normals_test_list.append(pred_normals_test_tensor)
+                gt_normals_test_list.append(gt_normals_test_tensor)
 
             logging.info(
                 f"  Train points: pred={len(pred_points_train)}, gt={len(gt_points_train)}"
@@ -524,6 +881,13 @@ def compute_metrics_for_epoch(args, epoch_num):
             pred_points_list.append(pred_points_tensor)
             gt_points_list.append(gt_points_tensor)
 
+            # Handle normals if needed
+            if args.compute_normal_consistency:
+                pred_normals_tensor = torch.tensor(pred_normals, dtype=torch.float32).cuda()
+                gt_normals_tensor = torch.tensor(gt_normals, dtype=torch.float32).cuda()
+                pred_normals_list.append(pred_normals_tensor)
+                gt_normals_list.append(gt_normals_tensor)
+
             # Load leaf tips from ground truth PLY file if requested (no-split case)
             if args.compute_tip_epe:
                 # Load GT leaf tips from PLY file
@@ -567,103 +931,148 @@ def compute_metrics_for_epoch(args, epoch_num):
         # Compute separate train and test metrics
         logging.info("Computing separate train and test metrics...")
 
-        # Train metrics
-        metrics_train = metrics_calculator.compute_metrics_per_timestep(
-            pred_points_train_list, gt_points_train_list
-        )
+        # Train metrics - Chamfer Distance using PyTorch3D
+        cd_train_values = []
+        for pred_pts, gt_pts in zip(pred_points_train_list, gt_points_train_list):
+            cd = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
+            cd_train_values.append(cd)
+
+        cd_train_tensor = torch.tensor(cd_train_values)
         metrics_json["train"] = {
             "num_timesteps": len(pred_points_train_list),
-            "mean_chamfer_distance": float(metrics_train["mean_chamfer"].cpu().item()),
-            "std_chamfer_distance": float(metrics_train["std_chamfer"].cpu().item()),
-            "chamfer_distances_per_timestep": [
-                float(cd.cpu().item()) for cd in metrics_train["chamfer_distances"]
-            ],
+            "mean_chamfer_distance": float(cd_train_tensor.mean().item()),
+            "std_chamfer_distance": float(cd_train_tensor.std().item()),
+            "chamfer_distances_per_timestep": [float(cd) for cd in cd_train_values],
         }
 
-        # Test metrics
-        metrics_test = metrics_calculator.compute_metrics_per_timestep(
-            pred_points_test_list, gt_points_test_list
-        )
+        # Train metrics - Normal Consistency
+        if args.compute_normal_consistency:
+            nc_train_values = []
+            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+                pred_points_train_list, pred_normals_train_list,
+                gt_points_train_list, gt_normals_train_list
+            ):
+                nc = compute_normal_consistency(pred_pts, pred_norms, gt_pts, gt_norms)
+                nc_train_values.append(nc)
+
+            nc_train_tensor = torch.tensor(nc_train_values)
+            metrics_json["train"]["mean_normal_consistency"] = float(nc_train_tensor.mean().item())
+            metrics_json["train"]["std_normal_consistency"] = float(nc_train_tensor.std().item())
+            metrics_json["train"]["normal_consistency_per_timestep"] = [float(nc) for nc in nc_train_values]
+
+        # Test metrics - Chamfer Distance using PyTorch3D
+        cd_test_values = []
+        for pred_pts, gt_pts in zip(pred_points_test_list, gt_points_test_list):
+            cd = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
+            cd_test_values.append(cd)
+
+        cd_test_tensor = torch.tensor(cd_test_values)
         metrics_json["test"] = {
             "num_timesteps": len(pred_points_test_list),
-            "mean_chamfer_distance": float(metrics_test["mean_chamfer"].cpu().item()),
-            "std_chamfer_distance": float(metrics_test["std_chamfer"].cpu().item()),
-            "chamfer_distances_per_timestep": [
-                float(cd.cpu().item()) for cd in metrics_test["chamfer_distances"]
-            ],
+            "mean_chamfer_distance": float(cd_test_tensor.mean().item()),
+            "std_chamfer_distance": float(cd_test_tensor.std().item()),
+            "chamfer_distances_per_timestep": [float(cd) for cd in cd_test_values],
         }
 
-        # Compute EPE for leaf tips in train split
+        # Test metrics - Normal Consistency
+        if args.compute_normal_consistency:
+            nc_test_values = []
+            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+                pred_points_test_list, pred_normals_test_list,
+                gt_points_test_list, gt_normals_test_list
+            ):
+                nc = compute_normal_consistency(pred_pts, pred_norms, gt_pts, gt_norms)
+                nc_test_values.append(nc)
+
+            nc_test_tensor = torch.tensor(nc_test_values)
+            metrics_json["test"]["mean_normal_consistency"] = float(nc_test_tensor.mean().item())
+            metrics_json["test"]["std_normal_consistency"] = float(nc_test_tensor.std().item())
+            metrics_json["test"]["normal_consistency_per_timestep"] = [float(nc) for nc in nc_test_values]
+
+        # Compute EPE for leaf tips using warper-based tracking
         if args.compute_tip_epe:
-            # Train split tips
-            valid_pred_tips_train = [t for t in pred_tips_train_list if t is not None]
-            valid_gt_tips_train = [t for t in gt_tips_train_list if t is not None]
+            try:
+                # Load specs and dataset for warper
+                from datasets import data_pheno4d
 
-            if len(valid_pred_tips_train) > 0 and len(valid_gt_tips_train) > 0:
-                epe_train_values = []
-                for pred_tips, gt_tips in zip(
-                    valid_pred_tips_train, valid_gt_tips_train
-                ):
-                    epe = torch.norm(pred_tips - gt_tips, dim=-1).mean()
-                    epe_train_values.append(epe)
+                specs_path = args.specifications
+                if not os.path.isabs(specs_path):
+                    specs_path = os.path.abspath(specs_path)
 
-                epe_train_tensor = torch.stack(epe_train_values)
-                metrics_json["train"]["num_timesteps_with_tips"] = len(
-                    valid_pred_tips_train
+                specs = json.load(open(specs_path))
+
+                # Load dataset
+                split_file = args.point_split_file
+                if args.dataset_name == "pheno4d" and split_file is None:
+                    sequence_name = args.object_name.split("/")[-1]
+                    split_file = f"configs/point_splits/{sequence_name}_split.json"
+
+                sdf_dataset = data_pheno4d.DeformSamples(
+                    args.object_name,
+                    start_idx=0,
+                    gap=None,
+                    train_step=1,
+                    use_dense=False,
+                    split_file=split_file,
+                    use_train_points=True,
                 )
-                metrics_json["train"]["mean_tip_epe"] = float(
-                    epe_train_tensor.mean().cpu().item()
+
+                # Load decoder model
+                decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
+
+                # Track tips with warper
+                tip_epe_results = track_tips_with_warper(
+                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits
                 )
-                metrics_json["train"]["std_tip_epe"] = float(
-                    epe_train_tensor.std().cpu().item()
-                )
-                metrics_json["train"]["tip_epe_per_timestep"] = [
-                    float(epe.cpu().item()) for epe in epe_train_tensor
-                ]
-                logging.info(
-                    f"Train Set - Leaf Tip EPE: {metrics_json['train']['mean_tip_epe']:.6f}"
-                )
-            else:
+
+                # Add results to metrics_json
+                # Train tips
+                train_epe_values = [v for v in tip_epe_results["train"] if v is not None]
+                if len(train_epe_values) > 0:
+                    train_epe_tensor = torch.tensor(train_epe_values)
+                    metrics_json["train"]["num_timesteps_with_tips"] = len(train_epe_values)
+                    metrics_json["train"]["mean_tip_epe"] = float(train_epe_tensor.mean().item())
+                    metrics_json["train"]["std_tip_epe"] = float(train_epe_tensor.std().item())
+                    metrics_json["train"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["train"]]
+                    logging.info(
+                        f"Train Set - Leaf Tip EPE (warper): {metrics_json['train']['mean_tip_epe']:.6f}"
+                    )
+                else:
+                    metrics_json["train"]["num_timesteps_with_tips"] = 0
+                    metrics_json["train"]["mean_tip_epe"] = None
+                    metrics_json["train"]["std_tip_epe"] = None
+                    metrics_json["train"]["tip_epe_per_timestep"] = []
+                    logging.info("Train Set - No leaf tips found (expected if tips are in test set)")
+
+                # Test tips
+                test_epe_values = [v for v in tip_epe_results["test"] if v is not None]
+                if len(test_epe_values) > 0:
+                    test_epe_tensor = torch.tensor(test_epe_values)
+                    metrics_json["test"]["num_timesteps_with_tips"] = len(test_epe_values)
+                    metrics_json["test"]["mean_tip_epe"] = float(test_epe_tensor.mean().item())
+                    metrics_json["test"]["std_tip_epe"] = float(test_epe_tensor.std().item())
+                    metrics_json["test"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["test"]]
+                    logging.info(
+                        f"Test Set - Leaf Tip EPE (warper): {metrics_json['test']['mean_tip_epe']:.6f}"
+                    )
+                else:
+                    metrics_json["test"]["num_timesteps_with_tips"] = 0
+                    metrics_json["test"]["mean_tip_epe"] = None
+                    metrics_json["test"]["std_tip_epe"] = None
+                    metrics_json["test"]["tip_epe_per_timestep"] = []
+                    logging.info("Test Set - No leaf tips found")
+
+            except Exception as e:
+                logging.error(f"Error computing warper-based tip EPE: {e}")
+                logging.warning("Falling back to skipping tip EPE computation")
                 metrics_json["train"]["num_timesteps_with_tips"] = 0
                 metrics_json["train"]["mean_tip_epe"] = None
                 metrics_json["train"]["std_tip_epe"] = None
                 metrics_json["train"]["tip_epe_per_timestep"] = []
-                logging.info(
-                    "Train Set - No leaf tips found (expected if tips are in test set)"
-                )
-
-            # Test split tips
-            valid_pred_tips_test = [t for t in pred_tips_test_list if t is not None]
-            valid_gt_tips_test = [t for t in gt_tips_test_list if t is not None]
-
-            if len(valid_pred_tips_test) > 0 and len(valid_gt_tips_test) > 0:
-                epe_test_values = []
-                for pred_tips, gt_tips in zip(valid_pred_tips_test, valid_gt_tips_test):
-                    epe = torch.norm(pred_tips - gt_tips, dim=-1).mean()
-                    epe_test_values.append(epe)
-
-                epe_test_tensor = torch.stack(epe_test_values)
-                metrics_json["test"]["num_timesteps_with_tips"] = len(
-                    valid_pred_tips_test
-                )
-                metrics_json["test"]["mean_tip_epe"] = float(
-                    epe_test_tensor.mean().cpu().item()
-                )
-                metrics_json["test"]["std_tip_epe"] = float(
-                    epe_test_tensor.std().cpu().item()
-                )
-                metrics_json["test"]["tip_epe_per_timestep"] = [
-                    float(epe.cpu().item()) for epe in epe_test_tensor
-                ]
-                logging.info(
-                    f"Test Set - Leaf Tip EPE: {metrics_json['test']['mean_tip_epe']:.6f}"
-                )
-            else:
                 metrics_json["test"]["num_timesteps_with_tips"] = 0
                 metrics_json["test"]["mean_tip_epe"] = None
                 metrics_json["test"]["std_tip_epe"] = None
                 metrics_json["test"]["tip_epe_per_timestep"] = []
-                logging.info("Test Set - No leaf tips found")
 
         # Log results
         logging.info(
@@ -681,55 +1090,95 @@ def compute_metrics_for_epoch(args, epoch_num):
 
     else:
         # No splits - compute metrics on all points (backward compatible)
-        if args.compute_tip_epe and len(pred_tips_list) > 0 and len(gt_tips_list) > 0:
-            # Filter out None values (timesteps without leaf tips)
-            valid_pred_tips = [t for t in pred_tips_list if t is not None]
-            valid_gt_tips = [t for t in gt_tips_list if t is not None]
+        logging.info("Computing metrics on full point clouds...")
 
-            if len(valid_pred_tips) > 0 and len(valid_gt_tips) > 0:
-                metrics = metrics_calculator.compute_metrics_per_timestep(
-                    pred_points_list, gt_points_list, valid_pred_tips, valid_gt_tips
-                )
-                logging.info(
-                    f"Computing tip EPE for {len(valid_pred_tips)}/{len(pred_tips_list)} timesteps with leaf tips"
-                )
-            else:
-                metrics = metrics_calculator.compute_metrics_per_timestep(
-                    pred_points_list, gt_points_list
-                )
-                logging.warning(
-                    "No valid leaf tips found, skipping tip EPE computation"
-                )
-        else:
-            metrics = metrics_calculator.compute_metrics_per_timestep(
-                pred_points_list, gt_points_list
-            )
+        # Chamfer Distance using PyTorch3D
+        cd_values = []
+        for pred_pts, gt_pts in zip(pred_points_list, gt_points_list):
+            cd = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
+            cd_values.append(cd)
 
+        cd_tensor = torch.tensor(cd_values)
         metrics_json["num_timesteps"] = len(pred_points_list)
-        metrics_json["mean_chamfer_distance"] = float(
-            metrics["mean_chamfer"].cpu().item()
-        )
-        metrics_json["std_chamfer_distance"] = float(
-            metrics["std_chamfer"].cpu().item()
-        )
-        metrics_json["chamfer_distances_per_timestep"] = [
-            float(cd.cpu().item()) for cd in metrics["chamfer_distances"]
-        ]
+        metrics_json["mean_chamfer_distance"] = float(cd_tensor.mean().item())
+        metrics_json["std_chamfer_distance"] = float(cd_tensor.std().item())
+        metrics_json["chamfer_distances_per_timestep"] = [float(cd) for cd in cd_values]
 
-        # Compute tip EPE if requested and tips were found
-        if args.compute_tip_epe and "mean_epe" in metrics:
-            # Count valid tips (filter out None)
-            valid_tips_count = sum(1 for t in pred_tips_list if t is not None)
-            metrics_json["num_timesteps_with_tips"] = valid_tips_count
-            metrics_json["mean_tip_epe"] = float(metrics["mean_epe"].cpu().item())
-            metrics_json["std_tip_epe"] = float(metrics["std_epe"].cpu().item())
-            metrics_json["tip_epe_per_timestep"] = [
-                float(epe.cpu().item()) for epe in metrics["epe"]
-            ]
-        elif args.compute_tip_epe:
-            logging.warning(
-                "Tip EPE requested but no leaf tips were found in any timestep"
-            )
+        # Normal Consistency
+        if args.compute_normal_consistency:
+            nc_values = []
+            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+                pred_points_list, pred_normals_list, gt_points_list, gt_normals_list
+            ):
+                nc = compute_normal_consistency(pred_pts, pred_norms, gt_pts, gt_norms)
+                nc_values.append(nc)
+
+            nc_tensor = torch.tensor(nc_values)
+            metrics_json["mean_normal_consistency"] = float(nc_tensor.mean().item())
+            metrics_json["std_normal_consistency"] = float(nc_tensor.std().item())
+            metrics_json["normal_consistency_per_timestep"] = [float(nc) for nc in nc_values]
+
+        # Tip EPE using warper-based tracking
+        if args.compute_tip_epe:
+            try:
+                # Load specs and dataset for warper
+                from datasets import data_pheno4d
+
+                specs_path = args.specifications
+                if not os.path.isabs(specs_path):
+                    specs_path = os.path.abspath(specs_path)
+
+                specs = json.load(open(specs_path))
+
+                # Load dataset
+                split_file = args.point_split_file
+                if args.dataset_name == "pheno4d" and split_file is None:
+                    sequence_name = args.object_name.split("/")[-1]
+                    split_file = f"configs/point_splits/{sequence_name}_split.json"
+                    if not os.path.exists(split_file):
+                        split_file = None
+
+                sdf_dataset = data_pheno4d.DeformSamples(
+                    args.object_name,
+                    start_idx=0,
+                    gap=None,
+                    train_step=1,
+                    use_dense=False,
+                    split_file=split_file,
+                    use_train_points=True,
+                )
+
+                # Load decoder model
+                decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
+
+                # Track tips with warper (no splits)
+                tip_epe_results = track_tips_with_warper(
+                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits=None
+                )
+
+                # Add results to metrics_json
+                epe_values = [v for v in tip_epe_results["all"] if v is not None]
+                if len(epe_values) > 0:
+                    epe_tensor = torch.tensor(epe_values)
+                    metrics_json["num_timesteps_with_tips"] = len(epe_values)
+                    metrics_json["mean_tip_epe"] = float(epe_tensor.mean().item())
+                    metrics_json["std_tip_epe"] = float(epe_tensor.std().item())
+                    metrics_json["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["all"]]
+                    logging.info(f"Leaf Tip EPE (warper): {metrics_json['mean_tip_epe']:.6f}")
+                else:
+                    metrics_json["num_timesteps_with_tips"] = 0
+                    metrics_json["mean_tip_epe"] = None
+                    metrics_json["std_tip_epe"] = None
+                    metrics_json["tip_epe_per_timestep"] = []
+                    logging.info("No leaf tips found in any timestep")
+
+            except Exception as e:
+                logging.error(f"Error computing warper-based tip EPE: {e}")
+                logging.warning("Skipping tip EPE computation")
+                metrics_json["num_timesteps_with_tips"] = 0
+                metrics_json["mean_tip_epe"] = None
+                metrics_json["std_tip_epe"] = None
+                metrics_json["tip_epe_per_timestep"] = []
 
         # Log results
         logging.info(
@@ -738,7 +1187,10 @@ def compute_metrics_for_epoch(args, epoch_num):
         logging.info(
             f"Std Chamfer Distance: {metrics_json['std_chamfer_distance']:.6f}"
         )
-        if args.compute_tip_epe and "mean_tip_epe" in metrics_json:
+        if args.compute_normal_consistency:
+            logging.info(f"Mean Normal Consistency: {metrics_json['mean_normal_consistency']:.6f}")
+            logging.info(f"Std Normal Consistency: {metrics_json['std_normal_consistency']:.6f}")
+        if args.compute_tip_epe and "mean_tip_epe" in metrics_json and metrics_json["mean_tip_epe"] is not None:
             logging.info(f"Mean Tip EPE: {metrics_json['mean_tip_epe']:.6f}")
             logging.info(f"Std Tip EPE: {metrics_json['std_tip_epe']:.6f}")
 

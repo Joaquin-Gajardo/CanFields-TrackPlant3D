@@ -17,6 +17,38 @@ class PlantMetrics:
         pass
 
     @staticmethod
+    def chamfer_distance_numpy_one_way(src: np.ndarray, tgt: np.ndarray) -> float:
+        """
+        Compute one-way Chamfer Distance from src to tgt using numpy.
+
+        Args:
+            src: Source point cloud of shape (N, 3)
+            tgt: Target point cloud of shape (M, 3)
+
+        Returns:
+            Mean of minimum squared distances
+        """
+        squared_distances = ((src[:, None, :] - tgt[None, :, :]) ** 2).sum(axis=2)
+        min_distances = squared_distances.min(axis=1)
+        return min_distances.mean()
+
+    @staticmethod
+    def chamfer_distance_numpy_symmetric(pred: np.ndarray, gt: np.ndarray) -> float:
+        """
+        Compute symmetric Chamfer Distance using numpy (sum of both directions).
+
+        Args:
+            pred: Predicted point cloud of shape (N, 3)
+            gt: Ground truth point cloud of shape (M, 3)
+
+        Returns:
+            Sum of bidirectional Chamfer distances
+        """
+        cd_pred_to_gt = PlantMetrics.chamfer_distance_numpy_one_way(pred, gt)
+        cd_gt_to_pred = PlantMetrics.chamfer_distance_numpy_one_way(gt, pred)
+        return cd_pred_to_gt + cd_gt_to_pred
+
+    @staticmethod
     def chamfer_distance(
         pred_points: torch.Tensor,
         gt_points: torch.Tensor,
@@ -35,38 +67,33 @@ class PlantMetrics:
         Returns:
             Chamfer distance value(s)
         """
-        # Ensure 3D tensors (B, N, 3)
+        # Convert to numpy for computation
         if pred_points.dim() == 2:
-            pred_points = pred_points.unsqueeze(0)
-        if gt_points.dim() == 2:
-            gt_points = gt_points.unsqueeze(0)
+            pred_np = pred_points.cpu().numpy()
+            gt_np = gt_points.cpu().numpy()
 
-        # Compute nearest neighbor distances from pred to gt
-        pred_to_gt = knn_points(pred_points, gt_points, K=1)
-        pred_to_gt_dists = pred_to_gt.dists[..., 0]  # (B, N)
+            if bidirectional:
+                cd = PlantMetrics.chamfer_distance_numpy_symmetric(pred_np, gt_np)
+            else:
+                cd = PlantMetrics.chamfer_distance_numpy_one_way(pred_np, gt_np)
 
-        if bidirectional:
-            # Compute nearest neighbor distances from gt to pred
-            gt_to_pred = knn_points(gt_points, pred_points, K=1)
-            gt_to_pred_dists = gt_to_pred.dists[..., 0]  # (B, M)
-
-            # Symmetric Chamfer distance
-            if reduction == "mean":
-                cd = pred_to_gt_dists.mean(dim=1) + gt_to_pred_dists.mean(dim=1)
-            elif reduction == "sum":
-                cd = pred_to_gt_dists.sum(dim=1) + gt_to_pred_dists.sum(dim=1)
-            else:  # "none"
-                cd = (pred_to_gt_dists, gt_to_pred_dists)
+            return torch.tensor(cd, dtype=torch.float32)
         else:
-            # One-directional (pred to gt only)
-            if reduction == "mean":
-                cd = pred_to_gt_dists.mean(dim=1)
-            elif reduction == "sum":
-                cd = pred_to_gt_dists.sum(dim=1)
-            else:  # "none"
-                cd = pred_to_gt_dists
+            # Batch mode - compute for each batch element
+            batch_size = pred_points.shape[0]
+            cds = []
+            for i in range(batch_size):
+                pred_np = pred_points[i].cpu().numpy()
+                gt_np = gt_points[i].cpu().numpy()
 
-        return cd
+                if bidirectional:
+                    cd = PlantMetrics.chamfer_distance_numpy_symmetric(pred_np, gt_np)
+                else:
+                    cd = PlantMetrics.chamfer_distance_numpy_one_way(pred_np, gt_np)
+
+                cds.append(cd)
+
+            return torch.tensor(cds, dtype=torch.float32)
 
     @staticmethod
     def endpoint_error(
