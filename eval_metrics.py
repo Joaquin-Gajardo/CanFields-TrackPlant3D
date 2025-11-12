@@ -482,6 +482,35 @@ def compute_metrics_for_epoch(args, epoch_num):
             ],
         }
 
+        # Compute EPE for leaf tips if requested and tips were collected
+        if args.compute_tip_epe and len(pred_tips_list) > 0 and len(gt_tips_list) > 0:
+            # Filter out None values (timesteps without leaf tips)
+            valid_pred_tips = [t for t in pred_tips_list if t is not None]
+            valid_gt_tips = [t for t in gt_tips_list if t is not None]
+
+            if len(valid_pred_tips) > 0 and len(valid_gt_tips) > 0:
+                # Compute EPE for all tips (full point cloud was used for tip matching)
+                epe_values = []
+                for pred_tips, gt_tips in zip(valid_pred_tips, valid_gt_tips):
+                    epe = torch.norm(pred_tips - gt_tips, dim=-1).mean()
+                    epe_values.append(epe)
+
+                epe_tensor = torch.stack(epe_values)
+
+                # Note: Tips are computed on full point clouds, not split-specific
+                # This allows us to verify if tips ended up in train or test points
+                metrics_json["leaf_tip_epe"] = {
+                    "num_timesteps_with_tips": len(valid_pred_tips),
+                    "mean_tip_epe": float(epe_tensor.mean().cpu().item()),
+                    "std_tip_epe": float(epe_tensor.std().cpu().item()),
+                    "tip_epe_per_timestep": [float(epe.cpu().item()) for epe in epe_tensor],
+                    "note": "Computed on full point clouds (not split-specific)"
+                }
+
+                logging.info(f"Leaf Tip EPE (full cloud): {metrics_json['leaf_tip_epe']['mean_tip_epe']:.6f}")
+            else:
+                logging.warning("No valid leaf tips found, skipping tip EPE computation")
+
         # Log results
         logging.info(f"Train Set - Mean CD: {metrics_json['train']['mean_chamfer_distance']:.6f}")
         logging.info(f"Train Set - Std CD: {metrics_json['train']['std_chamfer_distance']:.6f}")
