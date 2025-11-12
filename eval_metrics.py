@@ -29,7 +29,6 @@ import point_cloud_utils as pcu
 import torch
 import trimesh
 from pytorch3d.loss import chamfer_distance
-from pytorch3d.ops import knn_points
 
 from metrics.metrics import PlantMetrics
 from utils import add_common_args, configure_logging, load_latent_vectors, load_model_parameters
@@ -300,69 +299,51 @@ def get_ground_truth_paths(args):
         )
 
 
-def compute_pytorch3d_chamfer_distance(pred_points: torch.Tensor, gt_points: torch.Tensor) -> float:
+def compute_pytorch3d_chamfer_distance(
+    pred_points: torch.Tensor,
+    gt_points: torch.Tensor,
+    pred_normals: torch.Tensor = None,
+    gt_normals: torch.Tensor = None
+) -> tuple:
     """
-    Compute Chamfer Distance using PyTorch3D's implementation.
+    Compute Chamfer Distance and optionally Normal Consistency using PyTorch3D.
 
     Args:
         pred_points: Predicted point cloud of shape (N, 3)
         gt_points: Ground truth point cloud of shape (M, 3)
+        pred_normals: Optional predicted normals of shape (N, 3)
+        gt_normals: Optional GT normals of shape (M, 3)
 
     Returns:
-        Chamfer distance (sum of bidirectional distances)
+        Tuple of (chamfer_distance, normal_consistency)
+        - chamfer_distance: float, sum of bidirectional distances
+        - normal_consistency: float or None, 1 - cosine_distance (1=aligned, 0=orthogonal)
     """
     # PyTorch3D expects batch dimension
     pred_batch = pred_points.unsqueeze(0)  # (1, N, 3)
     gt_batch = gt_points.unsqueeze(0)      # (1, M, 3)
 
-    # chamfer_distance returns (loss1, loss2) where:
-    # loss1: pred->gt distance
-    # loss2: gt->pred distance
-    # Both are already squared L2 distances
-    cd_loss, _ = chamfer_distance(pred_batch, gt_batch)
+    # Prepare normals if provided
+    pred_normals_batch = pred_normals.unsqueeze(0) if pred_normals is not None else None
+    gt_normals_batch = gt_normals.unsqueeze(0) if gt_normals is not None else None
 
-    return cd_loss.item()
+    # chamfer_distance returns (loss_points, loss_normals) where:
+    # loss_points: sum of bidirectional point distances
+    # loss_normals: cosine distance of normals (if normals provided), else None
+    cd_loss, normal_loss = chamfer_distance(
+        pred_batch,
+        gt_batch,
+        x_normals=pred_normals_batch,
+        y_normals=gt_normals_batch
+    )
 
+    # Convert cosine distance to consistency: 1 - cosine_distance
+    # (cosine distance ranges from 0=aligned to 2=opposite, so 1-cosine_dist gives consistency)
+    normal_consistency = None
+    if normal_loss is not None:
+        normal_consistency = (1.0 - normal_loss).item()
 
-def compute_normal_consistency(
-    pred_points: torch.Tensor,
-    pred_normals: torch.Tensor,
-    gt_points: torch.Tensor,
-    gt_normals: torch.Tensor
-) -> float:
-    """
-    Compute Normal Consistency metric between predicted and GT point clouds.
-
-    For each predicted point, find the nearest GT point and compute the
-    absolute dot product between their normals. Average across all points.
-
-    Args:
-        pred_points: Predicted points of shape (N, 3)
-        pred_normals: Predicted normals of shape (N, 3)
-        gt_points: Ground truth points of shape (M, 3)
-        gt_normals: Ground truth normals of shape (M, 3)
-
-    Returns:
-        Normal consistency score (1 = perfect alignment, 0 = orthogonal)
-    """
-    # Add batch dimension for knn_points
-    pred_batch = pred_points.unsqueeze(0)  # (1, N, 3)
-    gt_batch = gt_points.unsqueeze(0)      # (1, M, 3)
-
-    # Find nearest GT point for each predicted point
-    knn_result = knn_points(pred_batch, gt_batch, K=1)
-    nearest_indices = knn_result.idx.squeeze(0).squeeze(-1)  # (N,)
-
-    # Get normals at nearest GT points
-    nearest_gt_normals = gt_normals[nearest_indices]  # (N, 3)
-
-    # Compute dot product between pred and nearest GT normals
-    dot_products = (pred_normals * nearest_gt_normals).sum(dim=-1)  # (N,)
-
-    # Take absolute value and average
-    normal_consistency = torch.abs(dot_products).mean()
-
-    return normal_consistency.item()
+    return cd_loss.item(), normal_consistency
 
 
 def load_decoder_model(args, specs, sdf_dataset, epoch_num):
@@ -402,7 +383,7 @@ def load_decoder_model(args, specs, sdf_dataset, epoch_num):
 
     # Load model as ModuleList (adjust + decoder)
     experiment_directory = get_experiment_directory(args)
-    epoch = epoch_num
+    epoch = str(epoch_num)  # Convert to string for load_model_parameters
 
     composed_model = torch.nn.ModuleList().cuda()
     composed_model.append(ajust)
@@ -684,18 +665,8 @@ def compute_metrics_for_epoch(args, epoch_num):
 
         logging.info(f"Processing timestep {i+1}/{len(pred_files)}: {pred_file}")
 
-        # Load predicted mesh as points (and normals if needed)
-        try:
-            if args.compute_normal_consistency:
-                pred_points, pred_normals = load_mesh_as_points(pred_path, args.num_samples, return_normals=True)
-            else:
-                pred_points = load_mesh_as_points(pred_path, args.num_samples, return_normals=False)
-                pred_normals = None
-        except Exception as e:
-            logging.error(f"Error loading predicted mesh {pred_file}: {e}")
-            continue
-
-        # Load ground truth point cloud (and normals if needed)
+        # Load ground truth point cloud (and normals if needed) FIRST
+        # We need to know the GT size to determine how many points to sample from prediction
         try:
             if args.compute_normal_consistency:
                 gt_points, _, gt_normals = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
@@ -715,26 +686,47 @@ def compute_metrics_for_epoch(args, epoch_num):
             logging.error(f"Error loading ground truth {gt_path}: {e}")
             continue
 
-        # Apply point splits if provided
+        # Determine number of points to sample from prediction
         if point_splits:
+            # If using point splits, we need to sample enough points to match GT test set size
             timepoint_data = point_splits["timepoints"][i]
             train_indices = np.array(timepoint_data["train_indices"], dtype=np.int64)
             test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
+
+            # Apply splits to GT points to get the actual counts
+            gt_points_train = apply_point_split(gt_points, train_indices)
+            gt_points_test = apply_point_split(gt_points, test_indices)
+
+            # Sample from prediction: num_train_points + num_test_points
+            num_pred_samples = len(gt_points_train) + len(gt_points_test)
 
             # DEBUG: Verify indices are loaded correctly
             if i == 0:  # Only print for first timestep
                 logging.info(f"DEBUG: First 10 train indices from split file: {train_indices[:10]}")
                 logging.info(f"DEBUG: First 10 test indices from split file: {test_indices[:10]}")
                 logging.info(f"DEBUG: Total GT points: {len(gt_points)}")
-                logging.info(f"DEBUG: n_train from split file: {timepoint_data.get('n_train', 'N/A')}")
-                logging.info(f"DEBUG: n_test from split file: {timepoint_data.get('n_test', 'N/A')}")
+                logging.info(f"DEBUG: GT train points: {len(gt_points_train)}")
+                logging.info(f"DEBUG: GT test points: {len(gt_points_test)}")
+                logging.info(f"DEBUG: Sampling {num_pred_samples} points from prediction")
+        else:
+            # No point splits, use default num_samples
+            num_pred_samples = args.num_samples
 
-            # Apply splits to GT points
-            gt_points_train = apply_point_split(gt_points, train_indices)
-            gt_points_test = apply_point_split(gt_points, test_indices)
+        # Load predicted mesh as points (and normals if needed)
+        try:
+            if args.compute_normal_consistency:
+                pred_points, pred_normals = load_mesh_as_points(pred_path, num_pred_samples, return_normals=True)
+            else:
+                pred_points = load_mesh_as_points(pred_path, num_pred_samples, return_normals=False)
+                pred_normals = None
+        except Exception as e:
+            logging.error(f"Error loading predicted mesh {pred_file}: {e}")
+            continue
 
-            # For predicted points, we need to use the same split indices
-            # Note: pred_points may have different number of points, so we need to be careful
+        # Apply point splits if provided
+        if point_splits:
+            # For predicted points, we use the same split indices as GT
+            # This assumes the sampled points maintain the same index correspondence
             pred_points_train = apply_point_split(pred_points, train_indices)
             pred_points_test = apply_point_split(pred_points, test_indices)
 
@@ -921,9 +913,11 @@ def compute_metrics_for_epoch(args, epoch_num):
                     gt_tips_list.append(None)
 
     # Compute metrics across all timesteps
+    # If using point splits, num_samples_per_mesh will vary per timestep to match GT
+    # Otherwise, it's the fixed args.num_samples
     metrics_json = {
         "epoch": epoch_num,
-        "num_samples_per_mesh": args.num_samples,
+        "num_samples_per_mesh": args.num_samples if not point_splits else "variable (matches GT point count)",
         "has_point_splits": point_splits is not None,
     }
 
@@ -931,11 +925,24 @@ def compute_metrics_for_epoch(args, epoch_num):
         # Compute separate train and test metrics
         logging.info("Computing separate train and test metrics...")
 
-        # Train metrics - Chamfer Distance using PyTorch3D
+        # Train metrics - Chamfer Distance and Normal Consistency using PyTorch3D
         cd_train_values = []
-        for pred_pts, gt_pts in zip(pred_points_train_list, gt_points_train_list):
-            cd = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
-            cd_train_values.append(cd)
+        nc_train_values = []
+
+        if args.compute_normal_consistency:
+            # Compute both CD and NC together
+            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+                pred_points_train_list, pred_normals_train_list,
+                gt_points_train_list, gt_normals_train_list
+            ):
+                cd, nc = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts, pred_norms, gt_norms)
+                cd_train_values.append(cd)
+                nc_train_values.append(nc)
+        else:
+            # Compute only CD
+            for pred_pts, gt_pts in zip(pred_points_train_list, gt_points_train_list):
+                cd, _ = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
+                cd_train_values.append(cd)
 
         cd_train_tensor = torch.tensor(cd_train_values)
         metrics_json["train"] = {
@@ -945,26 +952,30 @@ def compute_metrics_for_epoch(args, epoch_num):
             "chamfer_distances_per_timestep": [float(cd) for cd in cd_train_values],
         }
 
-        # Train metrics - Normal Consistency
-        if args.compute_normal_consistency:
-            nc_train_values = []
-            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
-                pred_points_train_list, pred_normals_train_list,
-                gt_points_train_list, gt_normals_train_list
-            ):
-                nc = compute_normal_consistency(pred_pts, pred_norms, gt_pts, gt_norms)
-                nc_train_values.append(nc)
-
+        if args.compute_normal_consistency and len(nc_train_values) > 0:
             nc_train_tensor = torch.tensor(nc_train_values)
             metrics_json["train"]["mean_normal_consistency"] = float(nc_train_tensor.mean().item())
             metrics_json["train"]["std_normal_consistency"] = float(nc_train_tensor.std().item())
             metrics_json["train"]["normal_consistency_per_timestep"] = [float(nc) for nc in nc_train_values]
 
-        # Test metrics - Chamfer Distance using PyTorch3D
+        # Test metrics - Chamfer Distance and Normal Consistency using PyTorch3D
         cd_test_values = []
-        for pred_pts, gt_pts in zip(pred_points_test_list, gt_points_test_list):
-            cd = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
-            cd_test_values.append(cd)
+        nc_test_values = []
+
+        if args.compute_normal_consistency:
+            # Compute both CD and NC together
+            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+                pred_points_test_list, pred_normals_test_list,
+                gt_points_test_list, gt_normals_test_list
+            ):
+                cd, nc = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts, pred_norms, gt_norms)
+                cd_test_values.append(cd)
+                nc_test_values.append(nc)
+        else:
+            # Compute only CD
+            for pred_pts, gt_pts in zip(pred_points_test_list, gt_points_test_list):
+                cd, _ = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
+                cd_test_values.append(cd)
 
         cd_test_tensor = torch.tensor(cd_test_values)
         metrics_json["test"] = {
@@ -974,16 +985,7 @@ def compute_metrics_for_epoch(args, epoch_num):
             "chamfer_distances_per_timestep": [float(cd) for cd in cd_test_values],
         }
 
-        # Test metrics - Normal Consistency
-        if args.compute_normal_consistency:
-            nc_test_values = []
-            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
-                pred_points_test_list, pred_normals_test_list,
-                gt_points_test_list, gt_normals_test_list
-            ):
-                nc = compute_normal_consistency(pred_pts, pred_norms, gt_pts, gt_norms)
-                nc_test_values.append(nc)
-
+        if args.compute_normal_consistency and len(nc_test_values) > 0:
             nc_test_tensor = torch.tensor(nc_test_values)
             metrics_json["test"]["mean_normal_consistency"] = float(nc_test_tensor.mean().item())
             metrics_json["test"]["std_normal_consistency"] = float(nc_test_tensor.std().item())
@@ -1063,7 +1065,9 @@ def compute_metrics_for_epoch(args, epoch_num):
                     logging.info("Test Set - No leaf tips found")
 
             except Exception as e:
+                import traceback
                 logging.error(f"Error computing warper-based tip EPE: {e}")
+                logging.error(f"Traceback: {traceback.format_exc()}")
                 logging.warning("Falling back to skipping tip EPE computation")
                 metrics_json["train"]["num_timesteps_with_tips"] = 0
                 metrics_json["train"]["mean_tip_epe"] = None
@@ -1081,22 +1085,49 @@ def compute_metrics_for_epoch(args, epoch_num):
         logging.info(
             f"Train Set - Std CD: {metrics_json['train']['std_chamfer_distance']:.6f}"
         )
+        if args.compute_normal_consistency and "mean_normal_consistency" in metrics_json["train"]:
+            logging.info(
+                f"Train Set - Mean NC: {metrics_json['train']['mean_normal_consistency']:.6f}"
+            )
+            logging.info(
+                f"Train Set - Std NC: {metrics_json['train']['std_normal_consistency']:.6f}"
+            )
+
         logging.info(
             f"Test Set - Mean CD: {metrics_json['test']['mean_chamfer_distance']:.6f}"
         )
         logging.info(
             f"Test Set - Std CD: {metrics_json['test']['std_chamfer_distance']:.6f}"
         )
+        if args.compute_normal_consistency and "mean_normal_consistency" in metrics_json["test"]:
+            logging.info(
+                f"Test Set - Mean NC: {metrics_json['test']['mean_normal_consistency']:.6f}"
+            )
+            logging.info(
+                f"Test Set - Std NC: {metrics_json['test']['std_normal_consistency']:.6f}"
+            )
 
     else:
         # No splits - compute metrics on all points (backward compatible)
         logging.info("Computing metrics on full point clouds...")
 
-        # Chamfer Distance using PyTorch3D
+        # Chamfer Distance and Normal Consistency using PyTorch3D
         cd_values = []
-        for pred_pts, gt_pts in zip(pred_points_list, gt_points_list):
-            cd = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
-            cd_values.append(cd)
+        nc_values = []
+
+        if args.compute_normal_consistency:
+            # Compute both CD and NC together
+            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+                pred_points_list, pred_normals_list, gt_points_list, gt_normals_list
+            ):
+                cd, nc = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts, pred_norms, gt_norms)
+                cd_values.append(cd)
+                nc_values.append(nc)
+        else:
+            # Compute only CD
+            for pred_pts, gt_pts in zip(pred_points_list, gt_points_list):
+                cd, _ = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
+                cd_values.append(cd)
 
         cd_tensor = torch.tensor(cd_values)
         metrics_json["num_timesteps"] = len(pred_points_list)
@@ -1104,15 +1135,7 @@ def compute_metrics_for_epoch(args, epoch_num):
         metrics_json["std_chamfer_distance"] = float(cd_tensor.std().item())
         metrics_json["chamfer_distances_per_timestep"] = [float(cd) for cd in cd_values]
 
-        # Normal Consistency
-        if args.compute_normal_consistency:
-            nc_values = []
-            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
-                pred_points_list, pred_normals_list, gt_points_list, gt_normals_list
-            ):
-                nc = compute_normal_consistency(pred_pts, pred_norms, gt_pts, gt_norms)
-                nc_values.append(nc)
-
+        if args.compute_normal_consistency and len(nc_values) > 0:
             nc_tensor = torch.tensor(nc_values)
             metrics_json["mean_normal_consistency"] = float(nc_tensor.mean().item())
             metrics_json["std_normal_consistency"] = float(nc_tensor.std().item())
@@ -1173,7 +1196,9 @@ def compute_metrics_for_epoch(args, epoch_num):
                     logging.info("No leaf tips found in any timestep")
 
             except Exception as e:
+                import traceback
                 logging.error(f"Error computing warper-based tip EPE: {e}")
+                logging.error(f"Traceback: {traceback.format_exc()}")
                 logging.warning("Skipping tip EPE computation")
                 metrics_json["num_timesteps_with_tips"] = 0
                 metrics_json["mean_tip_epe"] = None
