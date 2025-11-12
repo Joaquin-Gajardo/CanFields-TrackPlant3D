@@ -60,16 +60,32 @@ def chamfer_distance_pytorch3d(pred, gt):
     return cd.item()
 
 
-def load_ply(path):
-    """Load PLY file and extract points, is_train, and is_leaf_tip."""
+def load_ply(path, split_indices=None):
+    """
+    Load PLY file and extract points, is_train, and is_leaf_tip.
+
+    Args:
+        path: Path to PLY file
+        split_indices: Optional dict with 'train_indices' and 'test_indices' arrays
+
+    Returns:
+        points, is_train, is_leaf_tip
+    """
     pcd = o3d.t.io.read_point_cloud(str(path))
 
     points = pcd.point.positions.numpy()
 
-    # Extract is_train if available
+    # Extract is_train if available, or construct from split_indices
     is_train = None
     if "is_train" in pcd.point:
         is_train = pcd.point.is_train.numpy().flatten()
+    elif split_indices is not None:
+        # Construct is_train from split indices
+        is_train = np.zeros(len(points), dtype=np.int32)
+        train_indices = split_indices["train_indices"]
+        # Filter indices to be within bounds
+        valid_train_indices = [i for i in train_indices if i < len(points)]
+        is_train[valid_train_indices] = 1
 
     # Extract is_leaf_tip if available
     is_leaf_tip = None
@@ -87,9 +103,37 @@ def main(args):
     print(f"Ground Truth: {args.gt}")
     print()
 
+    # Load split file if provided
+    split_indices = None
+    if args.split_file:
+        import json
+
+        with open(args.split_file, "r") as f:
+            splits = json.load(f)
+        # Find the timepoint index by matching the filename
+        gt_filename = Path(args.gt).name
+        timepoint_idx = None
+        for i, tp in enumerate(splits["timepoints"]):
+            if gt_filename in tp.get("filename", ""):
+                timepoint_idx = i
+                break
+
+        if timepoint_idx is None:
+            # Try to infer from timepoint order (fallback)
+            print(
+                f"⚠️  Could not match filename in split file, using timepoint {args.timepoint}"
+            )
+            timepoint_idx = args.timepoint
+
+        if timepoint_idx < len(splits["timepoints"]):
+            split_indices = splits["timepoints"][timepoint_idx]
+            print(f"Using split file: {args.split_file} (timepoint {timepoint_idx})")
+        else:
+            print(f"⚠️  Timepoint {timepoint_idx} not found in split file")
+
     # Load point clouds
-    pred_points, pred_is_train, pred_is_tip = load_ply(args.pred)
-    gt_points, gt_is_train, gt_is_tip = load_ply(args.gt)
+    pred_points, pred_is_train, pred_is_tip = load_ply(args.pred, split_indices)
+    gt_points, gt_is_train, gt_is_tip = load_ply(args.gt, split_indices)
 
     print(f"Predicted cloud: {len(pred_points)} points")
     print(f"Ground truth cloud: {len(gt_points)} points")
@@ -197,6 +241,18 @@ def parse_args():
         default="gt.ply",
         help="Path to ground truth PLY file",
     )
+    parser.add_argument(
+        "--split_file",
+        type=str,
+        default=None,
+        help="Path to JSON split file (e.g., configs/point_splits/maize_control_plant2_split.json)",
+    )
+    parser.add_argument(
+        "--timepoint",
+        type=int,
+        default=0,
+        help="Timepoint index to use from split file (default: 0)",
+    )
     return parser.parse_args()
 
 
@@ -204,9 +260,11 @@ if __name__ == "__main__":
 
     args = parse_args()
     args.gt = Path(
-        "datasets/Pheno4D/processed/v2/plant_sequences/maize/maize_control_plant2/sparse_pc/10_maize_control_plant2_D00_sparse.ply"
+        "datasets/Pheno4D/processed/v2/plant_sequences/maize/maize_control_plant2/sparse_pc/11_maize_control_plant2_D01_sparse.ply"
     )
     args.pred = Path(
-        "results/pheno4d/ode_solve/maize/maize_control_plant2/20251111_052644_maize_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1/manifold/epoch_15000/10_maize_control_plant2_D00_sparse.ply"
+        "results/pheno4d/ode_solve/maize/maize_control_plant2/20251111_052644_maize_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1/manifold/epoch_15000/11_maize_control_plant2_D01_sparse.ply"
     )
+    args.split_file = "configs/point_splits/maize_control_plant2_split.json"
+    args.timepoint = 1  # First timepoint
     main(args)
