@@ -346,6 +346,100 @@ def compute_pytorch3d_chamfer_distance(
     return cd_loss.item(), normal_consistency
 
 
+def scene_flow_metrics(pred, labels, strict=0.025, relax=0.05):
+    """
+    Compute scene flow metrics: EPE3D, AccS (Strict Accuracy), AccR (Relaxed Accuracy).
+
+    Args:
+        pred: Predicted flow vectors of shape (N, 3)
+        labels: Ground truth flow vectors of shape (N, 3)
+        strict: Strict threshold (default 0.025 = 2.5cm)
+        relax: Relaxed threshold (default 0.05 = 5cm)
+
+    Returns:
+        Tuple of (EPE3D, AccS, AccR) where AccS and AccR are in percentage [0-100]
+    """
+    l2_norm = torch.sqrt(
+        torch.sum((pred - labels) ** 2, 1)
+    ).cpu()  # Absolute distance error.
+    labels_norm = torch.sqrt(torch.sum(labels * labels, 1)).cpu()
+    relative_err = l2_norm / (labels_norm + 1e-20)
+
+    EPE3D = torch.mean(l2_norm).item()  # Mean absolute distance error
+
+    # NOTE: AccS (Strict Accuracy)
+    error_lt_5 = torch.BoolTensor((l2_norm < strict))
+    relative_err_lt_5 = torch.BoolTensor((relative_err < strict))
+    AccS = torch.mean((error_lt_5 | relative_err_lt_5).float()).item()
+
+    # NOTE: AccR (Relaxed Accuracy)
+    error_lt_10 = torch.BoolTensor((l2_norm < relax))
+    relative_err_lt_10 = torch.BoolTensor((relative_err < relax))
+    AccR = torch.mean((error_lt_10 | relative_err_lt_10).float()).item()
+
+    return EPE3D, AccS * 100, AccR * 100
+
+
+def compute_storage_size(experiment_directory, epoch):
+    """
+    Compute total storage size of model checkpoints for a given epoch.
+
+    Args:
+        experiment_directory: Path to experiment directory
+        epoch: Epoch number (string)
+
+    Returns:
+        Total size in MB
+    """
+    checkpoint_dir = os.path.join(experiment_directory, "checkpoints")
+    total_size_bytes = 0
+
+    # Files are in subdirectories: checkpoints/{AdjustLatentCodes,LatentCodes,ModelParameters}/{epoch}.pth
+    checkpoint_subdirs = ["AdjustLatentCodes", "LatentCodes", "ModelParameters"]
+
+    for subdir in checkpoint_subdirs:
+        filepath = os.path.join(checkpoint_dir, subdir, f"{epoch}.pth")
+        if os.path.exists(filepath):
+            total_size_bytes += os.path.getsize(filepath)
+
+    # Convert to MB
+    return total_size_bytes / (1024 * 1024)
+
+
+def get_runtime_from_wandb(experiment_directory):
+    """
+    Extract runtime from wandb summary file.
+
+    Args:
+        experiment_directory: Path to experiment directory
+
+    Returns:
+        Runtime in minutes, or None if not found
+    """
+    wandb_summary_path = os.path.join(
+        experiment_directory, "wandb", "latest-run", "files", "wandb-summary.json"
+    )
+
+    if not os.path.exists(wandb_summary_path):
+        logging.warning(f"wandb summary not found: {wandb_summary_path}")
+        return None
+
+    try:
+        with open(wandb_summary_path, "r") as f:
+            summary = json.load(f)
+
+        # Extract runtime from _wandb.runtime (in seconds)
+        runtime_seconds = summary.get("_wandb", {}).get("runtime")
+        if runtime_seconds is not None:
+            return runtime_seconds / 60.0  # Convert to minutes
+        else:
+            logging.warning("Runtime not found in wandb summary")
+            return None
+    except Exception as e:
+        logging.warning(f"Error reading wandb summary: {e}")
+        return None
+
+
 def load_decoder_model(args, specs, sdf_dataset, epoch_num):
     """
     Load the trained decoder model for warper-based tip tracking.
@@ -468,6 +562,12 @@ def track_tips_with_warper(
     epe_values_train = [] if point_splits else None
     epe_values_test = [] if point_splits else None
 
+    # Also store warped and GT coordinates for AccS/AccR computation
+    warped_coords_all = []
+    gt_coords_all = []
+    warped_coords_test = [] if point_splits else None
+    gt_coords_test = [] if point_splits else None
+
     for t_idx, gt_path in enumerate(gt_paths):
         target_time = normalized_times[t_idx]
         gt_tip_coords = all_gt_tips[t_idx]
@@ -475,9 +575,13 @@ def track_tips_with_warper(
         if len(gt_tip_coords) == 0:
             logging.info(f"Timepoint {t_idx}: No GT tips found, skipping")
             epe_values_all.append(None)
+            warped_coords_all.append(None)
+            gt_coords_all.append(None)
             if point_splits:
                 epe_values_train.append(None)
                 epe_values_test.append(None)
+                warped_coords_test.append(None)
+                gt_coords_test.append(None)
             continue
 
         # Warp all tracked tips to target time
@@ -511,11 +615,13 @@ def track_tips_with_warper(
 
         warped_tip_coords = np.array(warped_tip_coords_list)
 
-        # Compute EPE
+        # Compute EPE and store coordinates
         if len(warped_tip_coords) == len(gt_tip_coords):
             epe_per_tip = np.linalg.norm(warped_tip_coords - gt_tip_coords, axis=1)
             mean_epe = epe_per_tip.mean()
             epe_values_all.append(mean_epe)
+            warped_coords_all.append(warped_tip_coords)
+            gt_coords_all.append(gt_tip_coords)
 
             logging.info(
                 f"Timepoint {t_idx}: Tracked {len(warped_tip_coords)} tips, Mean EPE = {mean_epe:.6f}"
@@ -549,22 +655,37 @@ def track_tips_with_warper(
                 if test_tip_mask.sum() > 0:
                     test_epe = epe_per_tip[test_tip_mask].mean()
                     epe_values_test.append(test_epe)
+                    # Store test tip coordinates for AccS/AccR
+                    warped_coords_test.append(warped_tip_coords[test_tip_mask])
+                    gt_coords_test.append(gt_tip_coords[test_tip_mask])
                 else:
                     epe_values_test.append(None)
+                    warped_coords_test.append(None)
+                    gt_coords_test.append(None)
         else:
             logging.warning(
                 f"Timepoint {t_idx}: Tip count mismatch "
                 f"(warped: {len(warped_tip_coords)}, GT: {len(gt_tip_coords)})"
             )
             epe_values_all.append(None)
+            warped_coords_all.append(None)
+            gt_coords_all.append(None)
             if point_splits:
                 epe_values_train.append(None)
                 epe_values_test.append(None)
+                warped_coords_test.append(None)
+                gt_coords_test.append(None)
 
-    result = {"all": epe_values_all}
+    result = {
+        "all": epe_values_all,
+        "warped_coords_all": warped_coords_all,
+        "gt_coords_all": gt_coords_all
+    }
     if point_splits:
         result["train"] = epe_values_train
         result["test"] = epe_values_test
+        result["warped_coords_test"] = warped_coords_test
+        result["gt_coords_test"] = gt_coords_test
 
     return result
 
@@ -924,23 +1045,29 @@ def compute_metrics_for_epoch(args, epoch_num):
     if point_splits:
         # Compute separate train and test metrics
         logging.info("Computing separate train and test metrics...")
+        logging.info("Skipping first frame (index 0) for CD/NC computation")
 
         # Train metrics - Chamfer Distance and Normal Consistency using PyTorch3D
+        # Skip first frame (index 0)
         cd_train_values = []
         nc_train_values = []
 
         if args.compute_normal_consistency:
-            # Compute both CD and NC together
-            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+            # Compute both CD and NC together, skip first frame
+            for i, (pred_pts, pred_norms, gt_pts, gt_norms) in enumerate(zip(
                 pred_points_train_list, pred_normals_train_list,
                 gt_points_train_list, gt_normals_train_list
-            ):
+            )):
+                if i == 0:
+                    continue  # Skip first frame
                 cd, nc = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts, pred_norms, gt_norms)
                 cd_train_values.append(cd)
                 nc_train_values.append(nc)
         else:
-            # Compute only CD
-            for pred_pts, gt_pts in zip(pred_points_train_list, gt_points_train_list):
+            # Compute only CD, skip first frame
+            for i, (pred_pts, gt_pts) in enumerate(zip(pred_points_train_list, gt_points_train_list)):
+                if i == 0:
+                    continue  # Skip first frame
                 cd, _ = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
                 cd_train_values.append(cd)
 
@@ -959,21 +1086,26 @@ def compute_metrics_for_epoch(args, epoch_num):
             metrics_json["train"]["normal_consistency_per_timestep"] = [float(nc) for nc in nc_train_values]
 
         # Test metrics - Chamfer Distance and Normal Consistency using PyTorch3D
+        # Skip first frame (index 0)
         cd_test_values = []
         nc_test_values = []
 
         if args.compute_normal_consistency:
-            # Compute both CD and NC together
-            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+            # Compute both CD and NC together, skip first frame
+            for i, (pred_pts, pred_norms, gt_pts, gt_norms) in enumerate(zip(
                 pred_points_test_list, pred_normals_test_list,
                 gt_points_test_list, gt_normals_test_list
-            ):
+            )):
+                if i == 0:
+                    continue  # Skip first frame
                 cd, nc = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts, pred_norms, gt_norms)
                 cd_test_values.append(cd)
                 nc_test_values.append(nc)
         else:
-            # Compute only CD
-            for pred_pts, gt_pts in zip(pred_points_test_list, gt_points_test_list):
+            # Compute only CD, skip first frame
+            for i, (pred_pts, gt_pts) in enumerate(zip(pred_points_test_list, gt_points_test_list)):
+                if i == 0:
+                    continue  # Skip first frame
                 cd, _ = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
                 cd_test_values.append(cd)
 
@@ -1110,22 +1242,28 @@ def compute_metrics_for_epoch(args, epoch_num):
     else:
         # No splits - compute metrics on all points (backward compatible)
         logging.info("Computing metrics on full point clouds...")
+        logging.info("Skipping first frame (index 0) for CD/NC computation")
 
         # Chamfer Distance and Normal Consistency using PyTorch3D
+        # Skip first frame (index 0)
         cd_values = []
         nc_values = []
 
         if args.compute_normal_consistency:
-            # Compute both CD and NC together
-            for pred_pts, pred_norms, gt_pts, gt_norms in zip(
+            # Compute both CD and NC together, skip first frame
+            for i, (pred_pts, pred_norms, gt_pts, gt_norms) in enumerate(zip(
                 pred_points_list, pred_normals_list, gt_points_list, gt_normals_list
-            ):
+            )):
+                if i == 0:
+                    continue  # Skip first frame
                 cd, nc = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts, pred_norms, gt_norms)
                 cd_values.append(cd)
                 nc_values.append(nc)
         else:
-            # Compute only CD
-            for pred_pts, gt_pts in zip(pred_points_list, gt_points_list):
+            # Compute only CD, skip first frame
+            for i, (pred_pts, gt_pts) in enumerate(zip(pred_points_list, gt_points_list)):
+                if i == 0:
+                    continue  # Skip first frame
                 cd, _ = compute_pytorch3d_chamfer_distance(pred_pts, gt_pts)
                 cd_values.append(cd)
 
@@ -1218,6 +1356,131 @@ def compute_metrics_for_epoch(args, epoch_num):
         if args.compute_tip_epe and "mean_tip_epe" in metrics_json and metrics_json["mean_tip_epe"] is not None:
             logging.info(f"Mean Tip EPE: {metrics_json['mean_tip_epe']:.6f}")
             logging.info(f"Std Tip EPE: {metrics_json['std_tip_epe']:.6f}")
+
+    # Compute scene flow metrics (AccS, AccR, EPE3D) on leaf tips using warped coordinates
+    # This uses the same warped tip tracking that we use for EPE computation
+    logging.info("Computing scene flow metrics (AccS, AccR, EPE3D) on tracked leaf tips...")
+
+    try:
+        if point_splits:
+            # Use warped test tip coordinates from tip tracking
+            if args.compute_tip_epe and "warped_coords_test" in tip_epe_results:
+                warped_coords_test = tip_epe_results["warped_coords_test"]
+                gt_coords_test = tip_epe_results["gt_coords_test"]
+
+                test_accs_values = []
+                test_accr_values = []
+                test_epe3d_values = []
+
+                # Compute flow between consecutive frames
+                for i in range(len(warped_coords_test) - 1):
+                    if warped_coords_test[i] is None or warped_coords_test[i+1] is None:
+                        continue
+                    if gt_coords_test[i] is None or gt_coords_test[i+1] is None:
+                        continue
+
+                    # Flow = position at t+1 minus position at t
+                    # Need to match tips across frames - use first N tips that exist in both frames
+                    min_tips = min(len(warped_coords_test[i]), len(warped_coords_test[i+1]))
+
+                    pred_flow = warped_coords_test[i+1][:min_tips] - warped_coords_test[i][:min_tips]
+                    gt_flow = gt_coords_test[i+1][:min_tips] - gt_coords_test[i][:min_tips]
+
+                    # Convert to tensors for scene_flow_metrics
+                    pred_flow_tensor = torch.from_numpy(pred_flow).float()
+                    gt_flow_tensor = torch.from_numpy(gt_flow).float()
+
+                    epe3d, accs, accr = scene_flow_metrics(pred_flow_tensor, gt_flow_tensor)
+                    test_epe3d_values.append(epe3d)
+                    test_accs_values.append(accs)
+                    test_accr_values.append(accr)
+
+                if len(test_accs_values) > 0:
+                    metrics_json["test"]["mean_AccS"] = float(np.mean(test_accs_values))
+                    metrics_json["test"]["std_AccS"] = float(np.std(test_accs_values))
+                    metrics_json["test"]["AccS_per_transition"] = [float(v) for v in test_accs_values]
+
+                    metrics_json["test"]["mean_AccR"] = float(np.mean(test_accr_values))
+                    metrics_json["test"]["std_AccR"] = float(np.std(test_accr_values))
+                    metrics_json["test"]["AccR_per_transition"] = [float(v) for v in test_accr_values]
+
+                    metrics_json["test"]["mean_EPE3D_flow"] = float(np.mean(test_epe3d_values))
+                    metrics_json["test"]["std_EPE3D_flow"] = float(np.std(test_epe3d_values))
+                    metrics_json["test"]["EPE3D_per_transition"] = [float(v) for v in test_epe3d_values]
+
+                    logging.info(f"Test Set - Mean AccS (leaf tips): {metrics_json['test']['mean_AccS']:.2f}%")
+                    logging.info(f"Test Set - Mean AccR (leaf tips): {metrics_json['test']['mean_AccR']:.2f}%")
+                    logging.info(f"Test Set - Mean EPE3D (leaf tip flow): {metrics_json['test']['mean_EPE3D_flow']:.6f}")
+                else:
+                    logging.warning("No valid tip flow transitions for AccS/AccR computation")
+            else:
+                logging.warning("Warped tip coordinates not available, skipping AccS/AccR on tips")
+        else:
+            # No splits - use all warped coordinates
+            if args.compute_tip_epe and "warped_coords_all" in tip_epe_results:
+                warped_coords_all = tip_epe_results["warped_coords_all"]
+                gt_coords_all = tip_epe_results["gt_coords_all"]
+
+                accs_values = []
+                accr_values = []
+                epe3d_values = []
+
+                for i in range(len(warped_coords_all) - 1):
+                    if warped_coords_all[i] is None or warped_coords_all[i+1] is None:
+                        continue
+                    if gt_coords_all[i] is None or gt_coords_all[i+1] is None:
+                        continue
+
+                    min_tips = min(len(warped_coords_all[i]), len(warped_coords_all[i+1]))
+
+                    pred_flow = warped_coords_all[i+1][:min_tips] - warped_coords_all[i][:min_tips]
+                    gt_flow = gt_coords_all[i+1][:min_tips] - gt_coords_all[i][:min_tips]
+
+                    pred_flow_tensor = torch.from_numpy(pred_flow).float()
+                    gt_flow_tensor = torch.from_numpy(gt_flow).float()
+
+                    epe3d, accs, accr = scene_flow_metrics(pred_flow_tensor, gt_flow_tensor)
+                    epe3d_values.append(epe3d)
+                    accs_values.append(accs)
+                    accr_values.append(accr)
+
+                if len(accs_values) > 0:
+                    metrics_json["mean_AccS"] = float(np.mean(accs_values))
+                    metrics_json["std_AccS"] = float(np.std(accs_values))
+                    metrics_json["AccS_per_transition"] = [float(v) for v in accs_values]
+
+                    metrics_json["mean_AccR"] = float(np.mean(accr_values))
+                    metrics_json["std_AccR"] = float(np.std(accr_values))
+                    metrics_json["AccR_per_transition"] = [float(v) for v in accr_values]
+
+                    metrics_json["mean_EPE3D_flow"] = float(np.mean(epe3d_values))
+                    metrics_json["std_EPE3D_flow"] = float(np.std(epe3d_values))
+                    metrics_json["EPE3D_per_transition"] = [float(v) for v in epe3d_values]
+
+                    logging.info(f"Mean AccS (leaf tips): {metrics_json['mean_AccS']:.2f}%")
+                    logging.info(f"Mean AccR (leaf tips): {metrics_json['mean_AccR']:.2f}%")
+                    logging.info(f"Mean EPE3D (leaf tip flow): {metrics_json['mean_EPE3D_flow']:.6f}")
+                else:
+                    logging.warning("No valid tip flow transitions for AccS/AccR computation")
+            else:
+                logging.warning("Warped tip coordinates not available, skipping AccS/AccR on tips")
+    except Exception as e:
+        import traceback
+        logging.error(f"Error computing scene flow metrics on tips: {e}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        logging.warning("Skipping AccS/AccR computation on tips")
+
+    # Add storage and runtime info
+    epoch_str = str(epoch_num)
+    storage_mb = compute_storage_size(args.experiment_name, epoch_str)
+    runtime_mins = get_runtime_from_wandb(args.experiment_name)
+
+    metrics_json["storage_mb"] = float(storage_mb)
+    metrics_json["runtime_minutes"] = float(runtime_mins) if runtime_mins is not None else None
+
+    logging.info(f"Storage size: {storage_mb:.2f} MB")
+    if runtime_mins is not None:
+        logging.info(f"Training runtime: {runtime_mins:.2f} minutes ({runtime_mins/60:.2f} hours)")
 
     return metrics_json
 
