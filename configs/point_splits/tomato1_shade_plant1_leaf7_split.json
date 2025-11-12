@@ -1,0 +1,43 @@
+{
+  "sequence_name": "tomato1_shade_plant1_leaf7",
+  "parent_plant": "tomato1_shade_plant1",
+  "random_seed": 42,
+  "train_ratio": 0.5,
+  "created_date": "2025-11-12T22:21:55.742349",
+  "dataset_version": "v2",
+  "n_timepoints": 4,
+  "timepoints": [
+    {
+      "timepoint_idx": 0,
+      "n_total_points": 189,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    },
+    {
+      "timepoint_idx": 1,
+      "n_total_points": 237,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    },
+    {
+      "timepoint_idx": 2,
+      "n_total_points": 256,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    },
+    {
+      "timepoint_idx": 3,
+      "n_total_points": 342,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "sequence_name": "tobacco_shade_plant3_leaf6",
+  "parent_plant": "tobacco_shade_plant3",
+  "random_seed": 42,
+  "train_ratio": 0.5,
+  "created_date": "2025-11-12T22:21:55.668859",
+  "dataset_version": "v2",
+  "n_timepoints": 3,
+  "timepoints": [
+    {
+      "timepoint_idx": 0,
+      "n_total_points": 88,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    },
+    {
+      "timepoint_idx": 1,
+      "n_total_points": 315,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    },
+    {
+      "timepoint_idx": 2,
+      "n_total_points": 1039,
+      "n_train": 0,
+      "n_test": 0,
+      "train_indices": [],
+      "test_indices": []
+    }
+  ]
+}
