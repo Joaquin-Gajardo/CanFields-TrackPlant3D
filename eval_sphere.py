@@ -468,17 +468,18 @@ def creat_colored_canonic_mesh(
         end_time = (sdf_dataset[end_idx])["normed_time"].cuda()
         this_time = 0.5 * (start_time + end_time)
 
-    create_mesh_colored_wmw(
-        decoder,
-        None,
-        os.path.join(export_path, "normalized_tempt"),
-        N=200,
-        sm_offset=min_swbbox[0],
-        sm_len=2 * 1.7 * swbbox_len,
-        lag_mean=None,
-        lag_scale=None,
-        this_time=this_time,
-    )
+    with torch.no_grad():
+        create_mesh_colored_wmw(
+            decoder,
+            None,
+            os.path.join(export_path, "normalized_tempt"),
+            N=200,
+            sm_offset=min_swbbox[0],
+            sm_len=2 * 1.7 * swbbox_len,
+            lag_mean=None,
+            lag_scale=None,
+            this_time=this_time,
+        )
 
 
 def find_closest_number(numbers, target):
@@ -492,6 +493,11 @@ def move_canonic_shape(
 ):
     # backward_time = torch.linspace(start_time,end_time,50).cuda()
     backward_time = sdf_dataset.normalized_times
+
+    # Ensure gradients are turned off and clean any accumulated gradients
+    decoder.warper.turoff_grad()
+    if hasattr(decoder.warper, 'clean_grads'):
+        decoder.warper.clean_grads()
 
     if methods == "4DSDF":
 
@@ -515,17 +521,22 @@ def move_canonic_shape(
             # inter_latent = None
             mesh_path = os.path.join(export_path, str(back_time.cpu().item()))
             print("mesh_path: ", mesh_path)
-            create_mesh_colored_wmw(
-                decoder,
-                None,
-                mesh_path,
-                N=128,
-                sm_offset=min_swbbox[0],
-                sm_len=2 * 1.7 * swbbox_len,
-                lag_mean=d_m,
-                lag_scale=d_s,
-                this_time=back_time.cuda(),
-            )
+            with torch.no_grad():
+                create_mesh_colored_wmw(
+                    decoder,
+                    None,
+                    mesh_path,
+                    N=128,
+                    sm_offset=min_swbbox[0],
+                    sm_len=2 * 1.7 * swbbox_len,
+                    lag_mean=d_m,
+                    lag_scale=d_s,
+                    this_time=back_time.cuda(),
+                )
+            # Clean accumulated gradients after each timestep
+            if hasattr(decoder.warper, 'clean_grads'):
+                decoder.warper.clean_grads()
+            torch.cuda.empty_cache()
             this_idx = this_idx + 1
     else:
         templat_full_path = os.path.join(export_path, "normalized_tempt.ply")
@@ -544,12 +555,13 @@ def move_canonic_shape(
         this_idx = 0
         for back_time in backward_time:
             sub_file = sdf_dataset.sub_files[this_idx]
-            chunks = torch.chunk(temp_v, num_chunks, dim=0)
-            v_final = []
-            for i, chunk in enumerate(chunks):
-                chunk_final = decoder.warper(chunk, gt_time, back_time)
-                v_final.append(chunk_final)
-            v_final = torch.cat(v_final, dim=0) / d_s.cuda() + d_m.cuda()
+            with torch.no_grad():
+                chunks = torch.chunk(temp_v, num_chunks, dim=0)
+                v_final = []
+                for i, chunk in enumerate(chunks):
+                    chunk_final = decoder.warper(chunk, gt_time, back_time)
+                    v_final.append(chunk_final)
+                v_final = torch.cat(v_final, dim=0) / d_s.cuda() + d_m.cuda()
             if methods == "4DSDF":
                 mesh_path = os.path.join(export_path, str(back_time.cpu().item()))
             else:
@@ -561,6 +573,10 @@ def move_canonic_shape(
             )
             new_mesh.visual.face_colors = temp_mesh.visual.face_colors
             new_mesh.export(mesh_path)
+            # Clean accumulated gradients after each timestep
+            if hasattr(decoder.warper, 'clean_grads'):
+                decoder.warper.clean_grads()
+            torch.cuda.empty_cache()
             this_idx = this_idx + 1
 
 
