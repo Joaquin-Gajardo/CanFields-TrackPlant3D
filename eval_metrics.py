@@ -642,6 +642,10 @@ def track_tips_with_warper(
                 warped_coord = warped_coord.flatten()
                 warped_tip_coords_list.append(warped_coord)
 
+        # Clean any accumulated gradients after processing each timepoint
+        if hasattr(decoder.warper, 'clean_grads'):
+            decoder.warper.clean_grads()
+
         warped_tip_coords = np.array(warped_tip_coords_list)
 
         # Compute EPE for tips that exist in GT at this timepoint
@@ -1212,10 +1216,19 @@ def compute_metrics_for_epoch(args, epoch_num):
                 # Load decoder model
                 decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
 
+                # Ensure gradient computation is disabled for tracking
+                decoder.warper.turoff_grad()
+                if hasattr(decoder.warper, 'clean_grads'):
+                    decoder.warper.clean_grads()
+
                 # Track tips with warper
                 tip_epe_results = track_tips_with_warper(
                     decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits
                 )
+
+                # Clean accumulated gradients after tracking
+                if hasattr(decoder.warper, 'clean_grads'):
+                    decoder.warper.clean_grads()
 
                 # Add results to metrics_json
                 # Train tips
@@ -1370,10 +1383,19 @@ def compute_metrics_for_epoch(args, epoch_num):
                 # Load decoder model
                 decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
 
+                # Ensure gradient computation is disabled for tracking
+                decoder.warper.turoff_grad()
+                if hasattr(decoder.warper, 'clean_grads'):
+                    decoder.warper.clean_grads()
+
                 # Track tips with warper (no splits)
                 tip_epe_results = track_tips_with_warper(
                     decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits=None
                 )
+
+                # Clean accumulated gradients after tracking
+                if hasattr(decoder.warper, 'clean_grads'):
+                    decoder.warper.clean_grads()
 
                 # Add results to metrics_json
                 epe_values = [v for v in tip_epe_results["all"] if v is not None]
