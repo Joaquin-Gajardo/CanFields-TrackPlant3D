@@ -482,17 +482,23 @@ def load_decoder_model(args, specs, sdf_dataset, epoch_num):
     )
     decoder = decoder.cuda()
 
-    # Create and equip embeddings (only for ode_solve and OF4D)
+    # Create embeddings and equip them BEFORE loading (so model structure matches checkpoint)
+    experiment_directory = get_experiment_directory(args)
+    epoch = str(epoch_num)  # Convert to string for load_model_parameters
+
+    # Create embeddings for methods that use them
     if method in ["ode_solve", "ode_solve_woAdaptor", "OF4D"]:
+        # These methods use 2 embeddings (start and end)
         start_end_vecs = torch.nn.Embedding(2, 128, max_norm=1.0).cuda()
+        decoder.warper.equip_embedding(start_end_vecs)
+    elif method == "TPSR":
+        # TPSR uses 1 embedding (shape code)
+        start_end_vecs = torch.nn.Embedding(1, 128, max_norm=1.0).cuda()
         decoder.warper.equip_embedding(start_end_vecs)
     else:
         start_end_vecs = None
 
-    # Load model (with or without AdjustLatentCodes depending on method)
-    experiment_directory = get_experiment_directory(args)
-    epoch = str(epoch_num)  # Convert to string for load_model_parameters
-
+    # Load model
     if method in ["ode_solve", "ode_solve_woAdaptor"]:
         # ode_solve uses adjust network
         composed_model = torch.nn.ModuleList().cuda()
@@ -502,22 +508,22 @@ def load_decoder_model(args, specs, sdf_dataset, epoch_num):
         ajust = composed_model[0]
         decoder = composed_model[1]
 
-        # Load latent vectors
+        # Load latent vectors for ode_solve
         load_latent_vectors(experiment_directory, epoch, start_end_vecs)
     else:
-        # Other methods (NVFI, 4DSDF, etc.) only have decoder
+        # Other methods (NVFI, 4DSDF, OF4D, TPSR) only have decoder
         load_model_parameters(experiment_directory, epoch, decoder)
 
-        # Load latent vectors if needed
-        if start_end_vecs is not None:
+        # Load latent vectors for methods that have separate embeddings
+        if method in ["OF4D", "TPSR"]:
             load_latent_vectors(experiment_directory, epoch, start_end_vecs)
 
     decoder.eval()
     if ajust is not None:
         ajust.eval()
 
-    # Set time range (only for ode_solve which needs time splitting)
-    if method in ["ode_solve", "ode_solve_woAdaptor"]:
+    # Set time range (for methods that use time splitting)
+    if method in ["ode_solve", "ode_solve_woAdaptor", "TPSR"]:
         start_time = sdf_dataset.normalized_times[0]
         end_time = sdf_dataset.normalized_times[-1]
         decoder.warper.split_time(start_time, end_time)
