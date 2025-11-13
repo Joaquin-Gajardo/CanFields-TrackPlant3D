@@ -128,6 +128,74 @@ def collect_metrics_from_experiments(
     return results
 
 
+def load_data_splits(config_path):
+    """
+    Load data splits configuration from JSON file.
+
+    Args:
+        config_path: Path to data splits config file
+
+    Returns:
+        Dictionary with 'val' and 'test' splits, or None if file doesn't exist
+    """
+    if not os.path.exists(config_path):
+        print(f"Warning: Data splits config not found at {config_path}")
+        return None
+
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+        return config.get("splits", {})
+    except Exception as e:
+        print(f"Error loading data splits config: {e}")
+        return None
+
+
+def filter_by_data_split(results, split_type, splits_config):
+    """
+    Filter results by data split (val/test/all).
+
+    Supports both exact matches and prefix matches for organ sequences:
+    - If config contains "maize_control_plant1", it will match:
+      - "maize_control_plant1" (exact plant match)
+      - "maize_control_plant1_leaf1" (organ sequence that starts with plant name)
+      - "maize_control_plant1_leaf2", etc.
+
+    Args:
+        results: List of result dictionaries
+        split_type: "val", "test", or "all"
+        splits_config: Dictionary with 'val' and 'test' sequence lists
+
+    Returns:
+        Filtered list of results
+    """
+    if split_type == "all" or splits_config is None:
+        return results
+
+    if split_type not in splits_config:
+        print(f"Warning: Split type '{split_type}' not found in config")
+        return results
+
+    split_sequences = set(splits_config[split_type])
+    filtered_results = []
+
+    for result in results:
+        sequence = result.get("sequence", "")
+
+        # Check exact match first
+        if sequence in split_sequences:
+            filtered_results.append(result)
+        else:
+            # Check if sequence starts with any plant name (for organ sequences)
+            # e.g., "maize_control_plant1_leaf1" starts with "maize_control_plant1"
+            for plant_name in split_sequences:
+                if sequence.startswith(plant_name + "_"):
+                    filtered_results.append(result)
+                    break
+
+    return filtered_results
+
+
 def filter_by_sequence_type(results, sequence_type):
     """
     Filter results by sequence type (organs vs full plants).
@@ -392,6 +460,17 @@ def main():
         help="Filter by sequence type: 'organs' for organ sequences (4+ parts), 'plants' for full plants (3 parts)",
     )
     parser.add_argument(
+        "--split",
+        choices=["all", "val", "test"],
+        default="all",
+        help="Data split to use: 'val', 'test', or 'all' (default: all)",
+    )
+    parser.add_argument(
+        "--splits_config",
+        default="configs/data_splits.json",
+        help="Path to data splits config file (default: configs/data_splits.json)",
+    )
+    parser.add_argument(
         "--output_dir",
         default="output/tables",
         help="Output directory for exported files (default: output/tables)",
@@ -402,6 +481,15 @@ def main():
     print(f"Collecting metrics from: {args.base_dir}")
     print(f"Epoch: {args.epoch if args.epoch else 'latest/summary'}")
     print(f"Metric type: {args.metric_type}")
+    print(f"Data split: {args.split}")
+
+    # Load data splits config if not using 'all'
+    splits_config = None
+    if args.split != "all":
+        splits_config = load_data_splits(args.splits_config)
+        if splits_config is None:
+            print(f"Warning: Could not load splits config, using all sequences")
+            args.split = "all"
 
     # Collect results
     results = collect_metrics_from_experiments(
@@ -415,6 +503,11 @@ def main():
         return
 
     print(f"\nFound {len(results)} experiments with metrics")
+
+    # Filter by data split if requested
+    if args.split != "all":
+        results = filter_by_data_split(results, args.split, splits_config)
+        print(f"Filtered to {len(results)} {args.split} split experiments")
 
     # Filter by sequence type if requested
     if args.filter:
@@ -439,17 +532,29 @@ def main():
         print(f"\nExporting to directory: {output_dir}")
 
     if args.export_csv:
-        csv_file = (
-            output_dir
-            / f"{args.output_prefix}_{args.filter}_epoch{args.epoch}{args.output_suffix}.csv"
-        )
+        # Build filename with split and filter info
+        filename_parts = [args.output_prefix]
+        if args.split != "all":
+            filename_parts.append(args.split)
+        if args.filter:
+            filename_parts.append(args.filter)
+        filename_parts.append(f"epoch{args.epoch}")
+        if args.output_suffix:
+            filename_parts.append(args.output_suffix)
+        csv_file = output_dir / f"{'_'.join(filename_parts)}.csv"
         export_to_csv(df, csv_file)
 
     if args.export_latex:
-        latex_file_method_crop = (
-            output_dir
-            / f"{args.output_prefix}_method_by_crop_{args.filter}_epoch{args.epoch}{args.output_suffix}.tex"
-        )
+        # Build filename with split and filter info
+        filename_parts = [args.output_prefix, "method_by_crop"]
+        if args.split != "all":
+            filename_parts.append(args.split)
+        if args.filter:
+            filename_parts.append(args.filter)
+        filename_parts.append(f"epoch{args.epoch}")
+        if args.output_suffix:
+            filename_parts.append(args.output_suffix)
+        latex_file_method_crop = output_dir / f"{'_'.join(filename_parts)}.tex"
 
         # Create method-by-crop pivot table
         method_crop_table = create_method_by_crop_table(results)
