@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""
+Script to check for missing or incomplete results for a given method and crop.
+
+Usage:
+    python check_missing_results.py <method> <crop> <type> [split]
+
+Examples:
+    python check_missing_results.py OF4D maize leaf
+    python check_missing_results.py OF4D maize leaf test
+    python check_missing_results.py NVFI sorghum plant val
+    python check_missing_results.py TPSR all leaf test
+"""
+
+import json
+import sys
+from pathlib import Path
+
+# Define sequences for each crop (matching run_crop_sequences.sh)
+CROP_PLANT_SEQUENCES = {
+    "maize": [
+        "maize_control_plant1",
+        "maize_control_plant2",
+        "maize_control_plant3",
+    ],
+    "sorghum": [
+        "sorghum_control_plant1",
+        "sorghum_control_plant2",
+        "sorghum_highlight_plant2",
+    ],
+    "tobacco": [
+        "tobacco_control_plant1",
+        "tobacco_control_plant2",
+        "tobacco_shade_plant3",
+    ],
+    "tomato": [
+        "tomato1_heat_plant3",
+        "tomato1_shade_plant1",
+        "tomato2_control_plant3",
+    ],
+}
+
+CROP_LEAF_SEQUENCES = {
+    "maize": [
+        "maize_control_plant1_leaf1",
+        "maize_control_plant1_leaf2",
+        "maize_control_plant1_leaf3",
+        "maize_control_plant1_leaf4",
+        "maize_control_plant1_stem",
+        "maize_control_plant2_leaf1",
+        "maize_control_plant2_leaf2",
+        "maize_control_plant2_leaf3",
+        "maize_control_plant2_leaf4",
+        "maize_control_plant2_leaf5",
+        "maize_control_plant2_stem",
+        "maize_control_plant3_leaf1",
+        "maize_control_plant3_leaf2",
+        "maize_control_plant3_leaf3",
+        "maize_control_plant3_leaf4",
+        "maize_control_plant3_stem",
+    ],
+    "sorghum": [
+        "sorghum_control_plant1_leaf1",
+        "sorghum_control_plant1_leaf2",
+        "sorghum_control_plant1_leaf3",
+        "sorghum_control_plant1_stem",
+        "sorghum_control_plant2_leaf1",
+        "sorghum_control_plant2_leaf2",
+        "sorghum_control_plant2_leaf3",
+        "sorghum_control_plant2_leaf4",
+        "sorghum_control_plant2_stem",
+        "sorghum_highlight_plant2_leaf1",
+        "sorghum_highlight_plant2_leaf2",
+        "sorghum_highlight_plant2_leaf3",
+        "sorghum_highlight_plant2_leaf4",
+        "sorghum_highlight_plant2_leaf5",
+        "sorghum_highlight_plant2_stem",
+    ],
+    "tobacco": [
+        "tobacco_control_plant1_leaf1",
+        "tobacco_control_plant1_leaf2",
+        "tobacco_control_plant1_leaf3",
+        "tobacco_control_plant1_leaf4",
+        "tobacco_control_plant1_leaf5",
+        "tobacco_control_plant1_leaf6",
+        "tobacco_control_plant1_stem",
+        "tobacco_control_plant2_leaf1",
+        "tobacco_control_plant2_leaf2",
+        "tobacco_control_plant2_leaf3",
+        "tobacco_control_plant2_leaf4",
+        "tobacco_control_plant2_leaf5",
+        "tobacco_control_plant2_leaf6",
+        "tobacco_control_plant2_stem",
+        "tobacco_shade_plant3_leaf1",
+        "tobacco_shade_plant3_leaf2",
+        "tobacco_shade_plant3_leaf3",
+        "tobacco_shade_plant3_leaf4",
+        "tobacco_shade_plant3_leaf5",
+        "tobacco_shade_plant3_leaf6",
+        "tobacco_shade_plant3_stem",
+    ],
+    "tomato": [
+        "tomato1_heat_plant3_leaf1",
+        "tomato1_heat_plant3_leaf2",
+        "tomato1_heat_plant3_leaf3",
+        "tomato1_heat_plant3_stem",
+        "tomato1_shade_plant1_leaf1",
+        "tomato1_shade_plant1_leaf2",
+        "tomato1_shade_plant1_leaf3",
+        "tomato1_shade_plant1_leaf4",
+        "tomato1_shade_plant1_leaf5",
+        "tomato1_shade_plant1_leaf6",
+        "tomato1_shade_plant1_leaf7",
+        "tomato1_shade_plant1_leaf8",
+        "tomato1_shade_plant1_stem",
+        "tomato2_control_plant3_leaf1",
+        "tomato2_control_plant3_leaf2",
+        "tomato2_control_plant3_leaf3",
+        "tomato2_control_plant3_leaf4",
+        "tomato2_control_plant3_leaf5",
+        "tomato2_control_plant3_leaf6",
+        "tomato2_control_plant3_leaf7",
+        "tomato2_control_plant3_stem",
+    ],
+}
+
+
+def load_splits():
+    """Load train/val/test splits from JSON."""
+    splits_file = Path("configs/data_splits.json")
+    if not splits_file.exists():
+        return None
+
+    with open(splits_file, "r") as f:
+        return json.load(f)
+
+
+def is_in_split(sequence_name, target_split, splits_data):
+    """Check if a sequence is in the target split."""
+    if target_split == "all":
+        return True
+
+    if splits_data is None:
+        return True
+
+    # Check if sequence is in the target split
+    split_sequences = splits_data["splits"][target_split].get("sequences", [])
+    split_plants = splits_data["splits"][target_split].get("plants", [])
+
+    # Check exact match or if it belongs to a plant in the split
+    if sequence_name in split_sequences or sequence_name in split_plants:
+        return True
+
+    return False
+
+
+def get_max_epoch(result_dir):
+    """Get the maximum epoch from checkpoints in a result directory."""
+    checkpoint_dir = result_dir / "checkpoints" / "LatentCodes"
+
+    if not checkpoint_dir.exists():
+        return 0
+
+    # Find all .pth files and extract epoch numbers
+    checkpoints = list(checkpoint_dir.glob("*.pth"))
+    if not checkpoints:
+        return 0
+
+    epochs = []
+    for ckpt in checkpoints:
+        try:
+            # Extract number from filename (e.g., "10000.pth" -> 10000)
+            epoch = int(ckpt.stem)
+            epochs.append(epoch)
+        except ValueError:
+            continue
+
+    return max(epochs) if epochs else 0
+
+
+def check_sequence_status(method, crop, sequence_name):
+    """
+    Check the status of a sequence.
+
+    Returns:
+        - "missing": No result directory exists
+        - "only_wandb": Only wandb folder exists
+        - "incomplete": Checkpoints exist but not 15000 epochs
+        - "complete": 15000 epochs reached
+        - (max_epoch, result_dir): For incomplete, return the max epoch and path
+    """
+    results_base = Path("results/pheno4d")
+    sequence_dir = results_base / method / crop / sequence_name
+
+    # Check if sequence directory exists
+    if not sequence_dir.exists():
+        return "missing", 0, None
+
+    # Find all run directories (timestamped subdirectories)
+    run_dirs = [d for d in sequence_dir.iterdir() if d.is_dir()]
+
+    if not run_dirs:
+        return "missing", 0, None
+
+    # Check the most recent run directory
+    run_dir = max(run_dirs, key=lambda d: d.name)
+
+    # Check what exists in the run directory
+    has_wandb = (run_dir / "wandb").exists()
+    has_checkpoints = (run_dir / "checkpoints").exists()
+    has_metrics = (run_dir / "metrics").exists()
+    has_meshes = (run_dir / "meshes").exists()
+
+    # If only wandb exists
+    if has_wandb and not has_checkpoints and not has_metrics and not has_meshes:
+        return "only_wandb", 0, run_dir
+
+    # Check max epoch
+    max_epoch = get_max_epoch(run_dir)
+
+    if max_epoch >= 15000:
+        return "complete", max_epoch, run_dir
+    else:
+        return "incomplete", max_epoch, run_dir
+
+
+def check_crop_sequences(method, crop, seq_type, split):
+    """Check all sequences for a given crop and type."""
+
+    # Load splits data
+    splits_data = load_splits()
+
+    # Get the appropriate sequence list
+    if seq_type == "leaf":
+        sequences = CROP_LEAF_SEQUENCES.get(crop, [])
+        type_name = "leaf"
+    else:
+        sequences = CROP_PLANT_SEQUENCES.get(crop, [])
+        type_name = "plant"
+
+    if not sequences:
+        print(f"No {type_name} sequences defined for crop: {crop}")
+        return
+
+    # Filter by split
+    if split != "all":
+        sequences = [seq for seq in sequences if is_in_split(seq, split, splits_data)]
+
+    if not sequences:
+        print(f"No sequences found for crop {crop}, type {type_name}, split {split}")
+        return
+
+    print(f"\n{'='*80}")
+    print(
+        f"Checking {method} results for {crop} {type_name} sequences (split: {split})"
+    )
+    print(f"{'='*80}\n")
+
+    missing = []
+    only_wandb = []
+    incomplete = []
+    complete = []
+
+    for sequence in sequences:
+        status, max_epoch, run_dir = check_sequence_status(method, crop, sequence)
+
+        if status == "missing":
+            missing.append(sequence)
+        elif status == "only_wandb":
+            only_wandb.append((sequence, run_dir))
+        elif status == "incomplete":
+            incomplete.append((sequence, max_epoch, run_dir))
+        elif status == "complete":
+            complete.append(sequence)
+
+    # Print summary
+    total = len(sequences)
+    print(f"Summary:")
+    print(f"  Total sequences:     {total}")
+    print(f"  Complete (15000):    {len(complete)}")
+    print(f"  Incomplete (<15000): {len(incomplete)}")
+    print(f"  Only wandb:          {len(only_wandb)}")
+    print(f"  Missing:             {len(missing)}")
+    print()
+
+    # Print sequences to rerun
+    to_rerun = []
+
+    if missing:
+        print(f"\nMissing sequences ({len(missing)}):")
+        print("-" * 80)
+        for seq in missing:
+            print(f"  - {seq}")
+            to_rerun.append(seq)
+
+    if only_wandb:
+        print(f"\nOnly wandb folder ({len(only_wandb)}):")
+        print("-" * 80)
+        for seq, run_dir in only_wandb:
+            print(f"  - {seq}")
+            print(f"    Path: {run_dir}")
+            to_rerun.append(seq)
+
+    if incomplete:
+        print(f"\nIncomplete training ({len(incomplete)}):")
+        print("-" * 80)
+        for seq, max_epoch, run_dir in incomplete:
+            print(f"  - {seq} (max epoch: {max_epoch})")
+            print(f"    Path: {run_dir}")
+            to_rerun.append(seq)
+
+    # Generate commands to rerun
+    if to_rerun:
+        print(f"\n{'='*80}")
+        print(f"Commands to rerun missing/incomplete sequences:")
+        print(f"{'='*80}\n")
+
+        # Combine all sequences into a single command
+        sequences_str = " ".join(to_rerun)
+        print(
+            f"sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+        )
+
+        print(f"\n# Or run them individually:")
+        for seq in to_rerun:
+            print(
+                f"# sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}"
+            )
+    else:
+        print(f"\nAll sequences are complete!")
+
+    print()
+
+
+def main():
+    if len(sys.argv) < 4:
+        print("Usage: python check_missing_results.py <method> <crop> <type> [split]")
+        print("\nExamples:")
+        print("  python check_missing_results.py OF4D maize leaf")
+        print("  python check_missing_results.py OF4D maize leaf test")
+        print("  python check_missing_results.py NVFI sorghum plant val")
+        print("  python check_missing_results.py TPSR all leaf test")
+        print("\nAvailable methods: OF4D, NVFI, TPSR, 4DSDF, ode_solve")
+        print("Available crops: maize, sorghum, tobacco, tomato, all")
+        print("Available types: plant, leaf")
+        print("Available splits: test (default), val, all")
+        sys.exit(1)
+
+    method = sys.argv[1]
+    crop = sys.argv[2]
+    seq_type = sys.argv[3] if len(sys.argv) > 3 else "plant"
+    split = sys.argv[4] if len(sys.argv) > 4 else "test"
+
+    # Validate inputs
+    if seq_type not in ["plant", "leaf"]:
+        print(f"Error: Invalid type '{seq_type}'. Must be 'plant' or 'leaf'")
+        sys.exit(1)
+
+    if split not in ["test", "val", "all"]:
+        print(f"Error: Invalid split '{split}'. Must be 'test', 'val', or 'all'")
+        sys.exit(1)
+
+    # Handle "all" crops
+    if crop == "all":
+        all_crops = ["maize", "sorghum", "tobacco", "tomato"]
+        for single_crop in all_crops:
+            check_crop_sequences(method, single_crop, seq_type, split)
+    else:
+        # Validate crop
+        sequences_dict = (
+            CROP_LEAF_SEQUENCES if seq_type == "leaf" else CROP_PLANT_SEQUENCES
+        )
+        if crop not in sequences_dict:
+            print(
+                f"Error: Invalid crop '{crop}'. Must be one of: {', '.join(sequences_dict.keys())}, all"
+            )
+            sys.exit(1)
+
+        check_crop_sequences(method, crop, seq_type, split)
+
+
+if __name__ == "__main__":
+    main()
