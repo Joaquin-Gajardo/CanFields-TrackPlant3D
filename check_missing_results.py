@@ -552,7 +552,7 @@ def check_all_crops_mixed(method, seq_type, split):
         for crop in sorted(crop_groups.keys()):
             seqs = crop_groups[crop]
             sequences_str = " ".join(seqs)
-            print(f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
+            print(f"sbatch -A es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
 
         print()
 
@@ -567,7 +567,7 @@ def check_all_crops_mixed(method, seq_type, split):
     for crop in sorted(crop_all_seqs.keys()):
         seqs = crop_all_seqs[crop]
         sequences_str = " ".join(seqs)
-        print(f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
+        print(f"# sbatch -A es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
 
     print()
 
