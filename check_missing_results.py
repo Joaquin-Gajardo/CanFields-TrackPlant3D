@@ -400,23 +400,42 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
 
     # Generate commands to rerun
     if to_rerun:
+        # Filter out sequences with very few timepoints from commands
+        few_timepoint_filtered = [seq for seq in to_rerun if seq in FEW_TIMEPOINT_SEQUENCES]
+        to_rerun_filtered = [seq for seq in to_rerun if seq not in FEW_TIMEPOINT_SEQUENCES]
+
+        if few_timepoint_filtered:
+            print(f"\n{'='*80}")
+            print(f"WARNING: Excluding sequences with very few timepoints from commands:")
+            print(f"{'='*80}")
+            print("These sequences may produce poor results and are NOT included in the commands below:")
+            for seq in few_timepoint_filtered:
+                n_timepoints = FEW_TIMEPOINT_SEQUENCES[seq]
+                print(f"  - {seq:50s} ({n_timepoints} timepoints)")
+            print("\nIf you want to run these anyway, use individual commands.")
+
+        if not to_rerun_filtered:
+            print(f"\nNo sequences to rerun (all are either complete or have too few timepoints).")
+            print()
+            return
+
         print(f"\n{'='*80}")
         print(f"Commands to rerun missing/incomplete sequences:")
         print(f"{'='*80}\n")
 
         # Split sequences into ~5 jobs (max 4-5 sequences per job)
-        sequences_per_job = max(4, (len(to_rerun) + 4) // 5)  # Aim for 5 jobs
+        sequences_per_job = max(4, (len(to_rerun_filtered) + 4) // 5)  # Aim for 5 jobs
 
-        if len(to_rerun) <= sequences_per_job:
+        if len(to_rerun_filtered) <= sequences_per_job:
             # Single job if few sequences
-            sequences_str = " ".join(to_rerun)
+            sequences_str = " ".join(to_rerun_filtered)
             print(
                 f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
             )
         else:
             # Multiple jobs
-            for i in range(0, len(to_rerun), sequences_per_job):
-                job_sequences = to_rerun[i : i + sequences_per_job]
+            for i in range(0, len(to_rerun_filtered), sequences_per_job):
+                job_sequences = to_rerun_filtered[i : i + sequences_per_job]
                 sequences_str = " ".join(job_sequences)
                 job_num = i // sequences_per_job + 1
                 print(f"# Job {job_num} ({len(job_sequences)} sequences)")
@@ -426,35 +445,15 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
                 print()
 
         print(f"# Or run all in one job:")
-        sequences_str = " ".join(to_rerun)
+        sequences_str = " ".join(to_rerun_filtered)
         print(
             f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
         )
 
         print(f"\n# Or run them individually:")
-        for seq in to_rerun:
+        for seq in to_rerun_filtered:
             print(
                 f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}"
-            )
-
-        # Check for sequences with very few timepoints
-        few_timepoint_in_rerun = [
-            (seq, FEW_TIMEPOINT_SEQUENCES[seq])
-            for seq in to_rerun
-            if seq in FEW_TIMEPOINT_SEQUENCES
-        ]
-
-        if few_timepoint_in_rerun:
-            print(f"\n{'='*80}")
-            print(f"WARNING: Sequences with very few timepoints:")
-            print(f"{'='*80}")
-            print(
-                "These sequences may produce poor results due to limited temporal data:"
-            )
-            for seq, n_timepoints in few_timepoint_in_rerun:
-                print(f"  - {seq:50s} ({n_timepoints} timepoints)")
-            print(
-                "\nConsider whether running these is worthwhile, especially for temporal methods."
             )
     else:
         print(f"\nAll sequences are complete!")
@@ -481,10 +480,30 @@ def check_all_crops_mixed(method, seq_type, split):
 
     # Flatten all sequences with their crop info
     all_sequences = []
+    few_timepoint_sequences = []
+
     for data in crop_data:
         crop = data["crop"]
         for seq in data["to_rerun"]:
-            all_sequences.append((crop, seq))
+            if seq in FEW_TIMEPOINT_SEQUENCES:
+                few_timepoint_sequences.append((crop, seq))
+            else:
+                all_sequences.append((crop, seq))
+
+    # Print warning about excluded sequences first
+    if few_timepoint_sequences:
+        print(f"\n{'='*80}")
+        print(f"WARNING: Excluding sequences with very few timepoints from commands:")
+        print(f"{'='*80}")
+        print("These sequences may produce poor results and are NOT included in the commands below:")
+        for crop, seq in few_timepoint_sequences:
+            n_timepoints = FEW_TIMEPOINT_SEQUENCES[seq]
+            print(f"  - {seq:50s} ({n_timepoints} timepoints, crop: {crop})")
+        print("\nIf you want to run these anyway, use individual commands.")
+
+    if not all_sequences:
+        print(f"\nNo sequences to rerun (all are either complete or have too few timepoints).")
+        return
 
     # Print summary for all crops
     print(f"\n{'='*80}")
@@ -549,22 +568,6 @@ def check_all_crops_mixed(method, seq_type, split):
         seqs = crop_all_seqs[crop]
         sequences_str = " ".join(seqs)
         print(f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
-
-    # Check for sequences with very few timepoints
-    few_timepoint_in_rerun = [
-        (seq, FEW_TIMEPOINT_SEQUENCES[seq])
-        for crop, seq in all_sequences
-        if seq in FEW_TIMEPOINT_SEQUENCES
-    ]
-
-    if few_timepoint_in_rerun:
-        print(f"\n{'='*80}")
-        print(f"WARNING: Sequences with very few timepoints:")
-        print(f"{'='*80}")
-        print("These sequences may produce poor results due to limited temporal data:")
-        for seq, n_timepoints in few_timepoint_in_rerun:
-            print(f"  - {seq:50s} ({n_timepoints} timepoints)")
-        print("\nConsider whether running these is worthwhile, especially for temporal methods.")
 
     print()
 
