@@ -3,7 +3,7 @@
   "parent_plant": "tomato2_control_plant3",
   "random_seed": 42,
   "train_ratio": 0.5,
-  "created_date": "2025-11-12T21:53:47.375046",
+  "created_date": "2025-11-13T20:43:47.538373",
   "dataset_version": "v2",
   "n_timepoints": 9,
   "timepoints": [

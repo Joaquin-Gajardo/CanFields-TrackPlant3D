@@ -16,6 +16,35 @@ import json
 import sys
 from pathlib import Path
 
+# Sequences that need to be rerun due to split bug fix (Nov 2025)
+# These had incorrect train/test splits because of timepoint mismatch
+SPLIT_BUG_AFFECTED_SEQUENCES = [
+    # Maize (4)
+    "maize_control_plant2_leaf4",
+    "maize_control_plant2_leaf5",
+    "maize_control_plant3_leaf3",
+    "maize_control_plant3_leaf4",
+    # Sorghum (5)
+    "sorghum_control_plant2_leaf3",
+    "sorghum_control_plant2_leaf4",
+    "sorghum_highlight_plant2_leaf3",
+    "sorghum_highlight_plant2_leaf4",
+    "sorghum_highlight_plant2_leaf5",
+    # Tobacco (4)
+    "tobacco_control_plant1_leaf5",
+    "tobacco_control_plant1_leaf6",
+    "tobacco_shade_plant3_leaf5",
+    "tobacco_shade_plant3_leaf6",
+    # Tomato (7)
+    "tomato1_heat_plant3_leaf3",
+    "tomato1_shade_plant1_leaf3",
+    "tomato1_shade_plant1_leaf4",
+    "tomato1_shade_plant1_leaf5",
+    "tomato1_shade_plant1_leaf6",
+    "tomato1_shade_plant1_leaf7",
+    "tomato1_shade_plant1_leaf8",
+]
+
 # Define sequences for each crop (matching run_crop_sequences.sh)
 CROP_PLANT_SEQUENCES = {
     "maize": [
@@ -273,6 +302,9 @@ def check_crop_sequences(method, crop, seq_type, split):
         elif status == "complete":
             complete.append(sequence)
 
+    # Count sequences affected by split bug before printing summary
+    split_bug_count = sum(1 for seq in sequences if seq in SPLIT_BUG_AFFECTED_SEQUENCES)
+
     # Print summary
     total = len(sequences)
     print(f"Summary:")
@@ -281,6 +313,8 @@ def check_crop_sequences(method, crop, seq_type, split):
     print(f"  Incomplete (<15000): {len(incomplete)}")
     print(f"  Only wandb:          {len(only_wandb)}")
     print(f"  Missing:             {len(missing)}")
+    if split_bug_count > 0:
+        print(f"  Need rerun (split bug): {split_bug_count}")
     print()
 
     # Print sequences to rerun
@@ -309,22 +343,64 @@ def check_crop_sequences(method, crop, seq_type, split):
             print(f"    Path: {run_dir}")
             to_rerun.append(seq)
 
+    # Check for sequences affected by split bug (need to be rerun even if complete)
+    split_bug_sequences = []
+    for seq in sequences:
+        if seq in SPLIT_BUG_AFFECTED_SEQUENCES:
+            # Check if already in to_rerun (missing/incomplete)
+            if seq not in to_rerun:
+                # Check if it has been trained
+                status, max_epoch, run_dir = check_sequence_status(method, crop, seq)
+                if status == "complete":
+                    split_bug_sequences.append((seq, run_dir))
+                    to_rerun.append(seq)
+
+    if split_bug_sequences:
+        print(f"\nNeed rerun due to split bug fix ({len(split_bug_sequences)}):")
+        print("-" * 80)
+        print("These sequences had incorrect train/test splits and need to be rerun")
+        print("even though they completed training:")
+        for seq, run_dir in split_bug_sequences:
+            print(f"  - {seq}")
+            print(f"    Path: {run_dir}")
+
     # Generate commands to rerun
     if to_rerun:
         print(f"\n{'='*80}")
         print(f"Commands to rerun missing/incomplete sequences:")
         print(f"{'='*80}\n")
 
-        # Combine all sequences into a single command
+        # Split sequences into ~5 jobs (max 4-5 sequences per job)
+        sequences_per_job = max(4, (len(to_rerun) + 4) // 5)  # Aim for 5 jobs
+
+        if len(to_rerun) <= sequences_per_job:
+            # Single job if few sequences
+            sequences_str = " ".join(to_rerun)
+            print(
+                f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+            )
+        else:
+            # Multiple jobs
+            for i in range(0, len(to_rerun), sequences_per_job):
+                job_sequences = to_rerun[i:i + sequences_per_job]
+                sequences_str = " ".join(job_sequences)
+                job_num = i // sequences_per_job + 1
+                print(f"# Job {job_num} ({len(job_sequences)} sequences)")
+                print(
+                    f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+                )
+                print()
+
+        print(f"# Or run all in one job:")
         sequences_str = " ".join(to_rerun)
         print(
-            f"sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+            f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
         )
 
         print(f"\n# Or run them individually:")
         for seq in to_rerun:
             print(
-                f"# sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}"
+                f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}"
             )
     else:
         print(f"\nAll sequences are complete!")

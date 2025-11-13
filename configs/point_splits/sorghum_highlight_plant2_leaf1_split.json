@@ -3,7 +3,7 @@
   "parent_plant": "sorghum_highlight_plant2",
   "random_seed": 42,
   "train_ratio": 0.5,
-  "created_date": "2025-11-12T21:53:08.039483",
+  "created_date": "2025-11-13T20:43:46.243543",
   "dataset_version": "v2",
   "n_timepoints": 5,
   "timepoints": [

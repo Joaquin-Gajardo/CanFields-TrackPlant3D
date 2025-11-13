@@ -168,17 +168,45 @@ def generate_organ_split(
     # Process each timepoint
     timepoint_splits = []
 
-    for tp_idx, plant_tp_split in enumerate(plant_split["timepoints"]):
-        # Get the timepoint files
-        organ_files = sorted(organ_sparse_dir.glob("*_sparse.ply"))
-        plant_files = sorted(plant_sparse_dir.glob("*_sparse.ply"))
+    # Get all files once
+    organ_files = sorted(organ_sparse_dir.glob("*_sparse.ply"))
+    plant_files = sorted(plant_sparse_dir.glob("*_sparse.ply"))
 
-        if tp_idx >= len(organ_files) or tp_idx >= len(plant_files):
-            print(f"Warning: Timepoint {tp_idx} missing for {organ_name}")
+    # Build mapping from day number to plant file and split
+    plant_day_to_file = {}
+    plant_day_to_split = {}
+    for tp_idx, plant_file in enumerate(plant_files):
+        # Extract day from filename (e.g., "17_..._D07_sparse.ply" -> "D07")
+        import re
+        day_match = re.search(r'_D(\d+)_', plant_file.name)
+        if day_match:
+            day_num = day_match.group(1)
+            plant_day_to_file[day_num] = plant_file
+            if tp_idx < len(plant_split["timepoints"]):
+                plant_day_to_split[day_num] = plant_split["timepoints"][tp_idx]
+
+    # Process each organ timepoint
+    for organ_tp_idx, organ_file in enumerate(organ_files):
+        # Extract day from organ filename
+        import re
+        day_match = re.search(r'_D(\d+)_', organ_file.name)
+        if not day_match:
+            print(f"Warning: Could not extract day from {organ_file.name}")
             continue
 
-        organ_file = organ_files[tp_idx]
-        plant_file = plant_files[tp_idx]
+        day_num = day_match.group(1)
+
+        # Find matching plant file and split
+        if day_num not in plant_day_to_file:
+            print(f"Warning: No matching plant file for day {day_num} in {organ_name}")
+            continue
+
+        if day_num not in plant_day_to_split:
+            print(f"Warning: No matching plant split for day {day_num} in {organ_name}")
+            continue
+
+        plant_file = plant_day_to_file[day_num]
+        plant_tp_split = plant_day_to_split[day_num]
 
         # Extract organ ID from organ filename
         organ_id = get_organ_id_from_filename(organ_file.name)
@@ -219,7 +247,7 @@ def generate_organ_split(
 
         # Create timepoint split entry
         timepoint_splits.append({
-            "timepoint_idx": tp_idx,
+            "timepoint_idx": organ_tp_idx,
             "n_total_points": len(organ_points),
             "n_train": len(organ_train_indices),
             "n_test": len(organ_test_indices),
