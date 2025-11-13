@@ -45,6 +45,20 @@ SPLIT_BUG_AFFECTED_SEQUENCES = [
     "tomato1_shade_plant1_leaf8",
 ]
 
+# Sequences with very few timepoints (may produce poor results)
+# Format: {sequence_name: number_of_timepoints}
+FEW_TIMEPOINT_SEQUENCES = {
+    # 2 timepoints
+    "maize_control_plant2_leaf5": 2,
+    "maize_control_plant3_leaf4": 2,
+    "sorghum_highlight_plant2_leaf5": 2,
+    "tobacco_control_plant1_leaf6": 2,
+    # # 3 timepoints
+    # "sorghum_control_plant2_leaf4": 3,
+    # "sorghum_highlight_plant2_leaf4": 3,
+    # "tobacco_shade_plant3_leaf6": 3,
+}
+
 # Define sequences for each crop (matching run_crop_sequences.sh)
 CROP_PLANT_SEQUENCES = {
     "maize": [
@@ -253,8 +267,16 @@ def check_sequence_status(method, crop, sequence_name):
         return "incomplete", max_epoch, run_dir
 
 
-def check_crop_sequences(method, crop, seq_type, split):
-    """Check all sequences for a given crop and type."""
+def check_crop_sequences(method, crop, seq_type, split, return_data=False):
+    """
+    Check all sequences for a given crop and type.
+
+    Args:
+        return_data: If True, return data instead of printing (for "all" crops mode)
+
+    Returns:
+        If return_data=True: dict with sequences info, else None
+    """
 
     # Load splits data
     splits_data = load_splits()
@@ -364,6 +386,18 @@ def check_crop_sequences(method, crop, seq_type, split):
             print(f"  - {seq}")
             print(f"    Path: {run_dir}")
 
+    # If return_data mode, return the data instead of printing commands
+    if return_data:
+        return {
+            "crop": crop,
+            "to_rerun": to_rerun,
+            "complete": complete,
+            "incomplete": incomplete,
+            "missing": missing,
+            "only_wandb": only_wandb,
+            "split_bug": split_bug_sequences,
+        }
+
     # Generate commands to rerun
     if to_rerun:
         print(f"\n{'='*80}")
@@ -382,7 +416,7 @@ def check_crop_sequences(method, crop, seq_type, split):
         else:
             # Multiple jobs
             for i in range(0, len(to_rerun), sequences_per_job):
-                job_sequences = to_rerun[i:i + sequences_per_job]
+                job_sequences = to_rerun[i : i + sequences_per_job]
                 sequences_str = " ".join(job_sequences)
                 job_num = i // sequences_per_job + 1
                 print(f"# Job {job_num} ({len(job_sequences)} sequences)")
@@ -402,8 +436,135 @@ def check_crop_sequences(method, crop, seq_type, split):
             print(
                 f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}"
             )
+
+        # Check for sequences with very few timepoints
+        few_timepoint_in_rerun = [
+            (seq, FEW_TIMEPOINT_SEQUENCES[seq])
+            for seq in to_rerun
+            if seq in FEW_TIMEPOINT_SEQUENCES
+        ]
+
+        if few_timepoint_in_rerun:
+            print(f"\n{'='*80}")
+            print(f"WARNING: Sequences with very few timepoints:")
+            print(f"{'='*80}")
+            print(
+                "These sequences may produce poor results due to limited temporal data:"
+            )
+            for seq, n_timepoints in few_timepoint_in_rerun:
+                print(f"  - {seq:50s} ({n_timepoints} timepoints)")
+            print(
+                "\nConsider whether running these is worthwhile, especially for temporal methods."
+            )
     else:
         print(f"\nAll sequences are complete!")
+
+    print()
+
+
+def check_all_crops_mixed(method, seq_type, split):
+    """
+    Check all crops and mix sequences for balanced job distribution.
+    """
+    all_crops = ["maize", "sorghum", "tobacco", "tomato"]
+
+    # Collect data from all crops
+    crop_data = []
+    for crop in all_crops:
+        data = check_crop_sequences(method, crop, seq_type, split, return_data=True)
+        if data and data["to_rerun"]:
+            crop_data.append(data)
+
+    if not crop_data:
+        print("\nAll sequences are complete across all crops!")
+        return
+
+    # Flatten all sequences with their crop info
+    all_sequences = []
+    for data in crop_data:
+        crop = data["crop"]
+        for seq in data["to_rerun"]:
+            all_sequences.append((crop, seq))
+
+    # Print summary for all crops
+    print(f"\n{'='*80}")
+    print(f"Overall Summary for {method} {seq_type} sequences (split: {split})")
+    print(f"{'='*80}\n")
+
+    total_to_rerun = len(all_sequences)
+    for data in crop_data:
+        crop = data["crop"]
+        print(f"{crop:10s}: {len(data['to_rerun']):2d} to rerun "
+              f"({len(data['complete'])} complete, {len(data['missing'])} missing, "
+              f"{len(data['incomplete'])} incomplete)")
+
+    print(f"\nTotal sequences to rerun: {total_to_rerun}")
+
+    # Generate mixed job commands
+    print(f"\n{'='*80}")
+    print(f"Commands to rerun (sequences mixed across crops for balanced workload):")
+    print(f"{'='*80}\n")
+
+    # Distribute sequences across ~5 jobs using round-robin
+    num_jobs = min(5, (total_to_rerun + 3) // 4)  # Aim for ~4-5 sequences per job
+    jobs = [[] for _ in range(num_jobs)]
+
+    # Round-robin distribution
+    for i, (crop, seq) in enumerate(all_sequences):
+        jobs[i % num_jobs].append((crop, seq))
+
+    # Print commands for each job
+    type_name = "leaf" if seq_type == "leaf" else "plant"
+
+    for job_num, job_sequences in enumerate(jobs, 1):
+        if not job_sequences:
+            continue
+
+        print(f"# Job {job_num} ({len(job_sequences)} sequences)")
+
+        # Group by crop within this job
+        crop_groups = {}
+        for crop, seq in job_sequences:
+            if crop not in crop_groups:
+                crop_groups[crop] = []
+            crop_groups[crop].append(seq)
+
+        # Generate one sbatch command per crop in this job
+        for crop in sorted(crop_groups.keys()):
+            seqs = crop_groups[crop]
+            sequences_str = " ".join(seqs)
+            print(f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
+
+        print()
+
+    # Print alternative: all in one go per crop
+    print(f"# Or run all sequences per crop:")
+    crop_all_seqs = {}
+    for crop, seq in all_sequences:
+        if crop not in crop_all_seqs:
+            crop_all_seqs[crop] = []
+        crop_all_seqs[crop].append(seq)
+
+    for crop in sorted(crop_all_seqs.keys()):
+        seqs = crop_all_seqs[crop]
+        sequences_str = " ".join(seqs)
+        print(f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
+
+    # Check for sequences with very few timepoints
+    few_timepoint_in_rerun = [
+        (seq, FEW_TIMEPOINT_SEQUENCES[seq])
+        for crop, seq in all_sequences
+        if seq in FEW_TIMEPOINT_SEQUENCES
+    ]
+
+    if few_timepoint_in_rerun:
+        print(f"\n{'='*80}")
+        print(f"WARNING: Sequences with very few timepoints:")
+        print(f"{'='*80}")
+        print("These sequences may produce poor results due to limited temporal data:")
+        for seq, n_timepoints in few_timepoint_in_rerun:
+            print(f"  - {seq:50s} ({n_timepoints} timepoints)")
+        print("\nConsider whether running these is worthwhile, especially for temporal methods.")
 
     print()
 
@@ -438,9 +599,7 @@ def main():
 
     # Handle "all" crops
     if crop == "all":
-        all_crops = ["maize", "sorghum", "tobacco", "tomato"]
-        for single_crop in all_crops:
-            check_crop_sequences(method, single_crop, seq_type, split)
+        check_all_crops_mixed(method, seq_type, split)
     else:
         # Validate crop
         sequences_dict = (
