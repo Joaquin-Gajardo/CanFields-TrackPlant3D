@@ -103,23 +103,86 @@ def collect_metrics_from_experiments(
                     "best_epoch": data.get("best_epoch_by_chamfer", None),
                     "metrics_file": str(metrics_file),
                 }
+                results.append(result)
             else:
-                result = {
-                    "experiment": experiment_name,
-                    "method": method,
-                    "crop": crop,
-                    "sequence": sequence,
-                    "epoch": data.get("epoch", None),
-                    "mean_cd": data.get("mean_chamfer_distance", None),
-                    "std_cd": data.get("std_chamfer_distance", None),
-                    "mean_epe": data.get("mean_tip_epe", None),
-                    "std_epe": data.get("std_tip_epe", None),
-                    "num_timesteps": data.get("num_timesteps", None),
-                    "timestamp": data.get("timestamp", None),
-                    "metrics_file": str(metrics_file),
-                }
+                # Handle both old flat structure and new split structure
+                has_point_splits = data.get("has_point_splits", False)
 
-            results.append(result)
+                if has_point_splits:
+                    # New structure with train/test splits - create entries for both
+                    # Train split
+                    if "train" in data:
+                        result_train = {
+                            "experiment": experiment_name,
+                            "method": method,
+                            "crop": crop,
+                            "sequence": sequence,
+                            "split": "train",
+                            "epoch": data.get("epoch", None),
+                            "mean_cd": data["train"].get("mean_chamfer_distance", None),
+                            "std_cd": data["train"].get("std_chamfer_distance", None),
+                            "mean_nc": data["train"].get("mean_normal_consistency", None),
+                            "std_nc": data["train"].get("std_normal_consistency", None),
+                            "mean_epe": data["train"].get("mean_tip_epe", None),
+                            "std_epe": data["train"].get("std_tip_epe", None),
+                            "mean_accs": data["train"].get("mean_AccS", None),
+                            "mean_accr": data["train"].get("mean_AccR", None),
+                            "mean_epe3d_flow": data["train"].get("mean_EPE3D_flow", None),
+                            "num_timesteps": data["train"].get("num_timesteps", None),
+                            "storage_mb": data.get("storage_mb", None),
+                            "runtime_minutes": data.get("runtime_minutes", None),
+                            "timestamp": data.get("timestamp", None),
+                            "metrics_file": str(metrics_file),
+                        }
+                        results.append(result_train)
+
+                    # Test split
+                    if "test" in data:
+                        result_test = {
+                            "experiment": experiment_name,
+                            "method": method,
+                            "crop": crop,
+                            "sequence": sequence,
+                            "split": "test",
+                            "epoch": data.get("epoch", None),
+                            "mean_cd": data["test"].get("mean_chamfer_distance", None),
+                            "std_cd": data["test"].get("std_chamfer_distance", None),
+                            "mean_nc": data["test"].get("mean_normal_consistency", None),
+                            "std_nc": data["test"].get("std_normal_consistency", None),
+                            "mean_epe": data["test"].get("mean_tip_epe", None),
+                            "std_epe": data["test"].get("std_tip_epe", None),
+                            "mean_accs": data["test"].get("mean_AccS", None),
+                            "mean_accr": data["test"].get("mean_AccR", None),
+                            "mean_epe3d_flow": data["test"].get("mean_EPE3D_flow", None),
+                            "num_timesteps": data["test"].get("num_timesteps", None),
+                            "storage_mb": data.get("storage_mb", None),
+                            "runtime_minutes": data.get("runtime_minutes", None),
+                            "timestamp": data.get("timestamp", None),
+                            "metrics_file": str(metrics_file),
+                        }
+                        results.append(result_test)
+                else:
+                    # Old flat structure (backward compatible)
+                    result = {
+                        "experiment": experiment_name,
+                        "method": method,
+                        "crop": crop,
+                        "sequence": sequence,
+                        "split": "all",
+                        "epoch": data.get("epoch", None),
+                        "mean_cd": data.get("mean_chamfer_distance", None),
+                        "std_cd": data.get("std_chamfer_distance", None),
+                        "mean_nc": data.get("mean_normal_consistency", None),
+                        "std_nc": data.get("std_normal_consistency", None),
+                        "mean_epe": data.get("mean_tip_epe", None),
+                        "std_epe": data.get("std_tip_epe", None),
+                        "num_timesteps": data.get("num_timesteps", None),
+                        "storage_mb": data.get("storage_mb", None),
+                        "runtime_minutes": data.get("runtime_minutes", None),
+                        "timestamp": data.get("timestamp", None),
+                        "metrics_file": str(metrics_file),
+                    }
+                    results.append(result)
 
         except Exception as e:
             print(f"Error reading {metrics_file}: {e}")
@@ -504,10 +567,17 @@ def main():
 
     print(f"\nFound {len(results)} experiments with metrics")
 
-    # Filter by data split if requested
-    if args.split != "all":
-        results = filter_by_data_split(results, args.split, splits_config)
-        print(f"Filtered to {len(results)} {args.split} split experiments")
+    # Filter by point split (train/test) if requested
+    # This is different from data split (val/test sequences)
+    # Check if user wants train or test point split
+    split_filter = args.split if args.split in ["train", "test"] else None
+    if split_filter:
+        # Filter by the 'split' column in results
+        results = [r for r in results if r.get("split") == split_filter]
+        print(f"Filtered to {len(results)} {split_filter} point split experiments")
+
+    # Note: The --split argument handles data splits (val/test sequences)
+    # via filter_by_data_split which is currently unused but kept for compatibility
 
     # Filter by sequence type if requested
     if args.filter:

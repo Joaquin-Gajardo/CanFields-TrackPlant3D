@@ -453,51 +453,74 @@ def load_decoder_model(args, specs, sdf_dataset, epoch_num):
     Returns:
         Tuple of (decoder, scale, mean, normalized_times)
     """
-    from networks.multi_velocity_debug import Decoder, adjust_net
+    # Import the correct Decoder based on method
+    method = args.methods
+    if method in ["ode_solve", "ode_solve_woAdaptor"]:
+        from networks.multi_velocity_debug import Decoder, adjust_net
+    else:
+        # NVFI, 4DSDF, OF4D use other_volocities
+        from networks.other_volocities import Decoder
+        adjust_net = None  # These methods don't use adjust network
 
     logging.info("Loading trained decoder model for tip tracking...")
 
     latent_size = specs["CodeLength"]
 
-    # Create adjustment network
-    ajust = adjust_net().cuda()
+    # Create adjustment network (only for ode_solve)
+    if method in ["ode_solve", "ode_solve_woAdaptor"]:
+        ajust = adjust_net().cuda()
+    else:
+        ajust = None
 
-    # Create decoder
+    # Create decoder with the actual method
+    method = args.methods  # Use the method specified in args
     decoder = Decoder(
-        "ode_solve",
+        method,
         latent_size,
         specs["NetworkSpecs"]["warper_kargs"],
         specs["NetworkSpecs"]["decoder_debug_kargs"],
     )
     decoder = decoder.cuda()
 
-    # Create and equip embeddings
-    start_end_vecs = torch.nn.Embedding(2, 128, max_norm=1.0).cuda()
-    decoder.warper.equip_embedding(start_end_vecs)
+    # Create and equip embeddings (only for ode_solve and OF4D)
+    if method in ["ode_solve", "ode_solve_woAdaptor", "OF4D"]:
+        start_end_vecs = torch.nn.Embedding(2, 128, max_norm=1.0).cuda()
+        decoder.warper.equip_embedding(start_end_vecs)
+    else:
+        start_end_vecs = None
 
-    # Load model as ModuleList (adjust + decoder)
+    # Load model (with or without AdjustLatentCodes depending on method)
     experiment_directory = get_experiment_directory(args)
     epoch = str(epoch_num)  # Convert to string for load_model_parameters
 
-    composed_model = torch.nn.ModuleList().cuda()
-    composed_model.append(ajust)
-    composed_model.append(decoder)
+    if method in ["ode_solve", "ode_solve_woAdaptor"]:
+        # ode_solve uses adjust network
+        composed_model = torch.nn.ModuleList().cuda()
+        composed_model.append(ajust)
+        composed_model.append(decoder)
+        load_model_parameters(experiment_directory, epoch, composed_model)
+        ajust = composed_model[0]
+        decoder = composed_model[1]
 
-    load_model_parameters(experiment_directory, epoch, composed_model)
+        # Load latent vectors
+        load_latent_vectors(experiment_directory, epoch, start_end_vecs)
+    else:
+        # Other methods (NVFI, 4DSDF, etc.) only have decoder
+        load_model_parameters(experiment_directory, epoch, decoder)
 
-    # Extract decoder after loading
-    ajust = composed_model[0]
-    decoder = composed_model[1]
-
-    load_latent_vectors(experiment_directory, epoch, start_end_vecs)
+        # Load latent vectors if needed
+        if start_end_vecs is not None:
+            load_latent_vectors(experiment_directory, epoch, start_end_vecs)
 
     decoder.eval()
-    ajust.eval()
+    if ajust is not None:
+        ajust.eval()
 
-    # Set time range
-    start_time = sdf_dataset.normalized_times[0]
-    end_time = sdf_dataset.normalized_times[-1]
-    decoder.warper.split_time(start_time, end_time)
+    # Set time range (only for ode_solve which needs time splitting)
+    if method in ["ode_solve", "ode_solve_woAdaptor"]:
+        start_time = sdf_dataset.normalized_times[0]
+        end_time = sdf_dataset.normalized_times[-1]
+        decoder.warper.split_time(start_time, end_time)
 
     # Get normalization parameters
     scale = sdf_dataset.scale
@@ -615,17 +638,37 @@ def track_tips_with_warper(
 
         warped_tip_coords = np.array(warped_tip_coords_list)
 
-        # Compute EPE and store coordinates
-        if len(warped_tip_coords) == len(gt_tip_coords):
-            epe_per_tip = np.linalg.norm(warped_tip_coords - gt_tip_coords, axis=1)
+        # Compute EPE for tips that exist in GT at this timepoint
+        # We track ALL tips continuously, but only evaluate EPE where GT exists
+        num_gt_tips = len(gt_tip_coords)
+        num_warped_tips = len(warped_tip_coords)
+
+        # Match warped tips to GT tips (use first N tips that have been initialized)
+        # Assumption: tips are initialized in order and GT tips are in the same order
+        num_tips_to_eval = min(num_warped_tips, num_gt_tips)
+
+        if num_tips_to_eval > 0:
+            # Compute EPE only for tips that have GT at this frame
+            warped_to_eval = warped_tip_coords[:num_tips_to_eval]
+            gt_to_eval = gt_tip_coords[:num_tips_to_eval]
+
+            epe_per_tip = np.linalg.norm(warped_to_eval - gt_to_eval, axis=1)
             mean_epe = epe_per_tip.mean()
             epe_values_all.append(mean_epe)
-            warped_coords_all.append(warped_tip_coords)
-            gt_coords_all.append(gt_tip_coords)
 
-            logging.info(
-                f"Timepoint {t_idx}: Tracked {len(warped_tip_coords)} tips, Mean EPE = {mean_epe:.6f}"
-            )
+            # Store ALL warped tips (for continuous tracking), but only GT tips that exist
+            warped_coords_all.append(warped_tip_coords)  # All tracked tips
+            gt_coords_all.append(gt_tip_coords)  # Only GT tips at this frame
+
+            if num_warped_tips != num_gt_tips:
+                logging.info(
+                    f"Timepoint {t_idx}: Tracked {num_warped_tips} tips, GT has {num_gt_tips} tips, "
+                    f"evaluated {num_tips_to_eval} tips, Mean EPE = {mean_epe:.6f}"
+                )
+            else:
+                logging.info(
+                    f"Timepoint {t_idx}: Tracked {num_warped_tips} tips, Mean EPE = {mean_epe:.6f}"
+                )
 
             # Handle splits if provided
             if point_splits:
@@ -640,9 +683,9 @@ def track_tips_with_warper(
                 # Load tip indices from GT
                 gt_tip_indices_in_full_cloud, _ = load_leaf_tips_from_ply(gt_path)
 
-                # Separate tips into train and test
-                train_tip_mask = np.isin(gt_tip_indices_in_full_cloud, train_indices)
-                test_tip_mask = np.isin(gt_tip_indices_in_full_cloud, test_indices)
+                # Separate tips into train and test (only for tips we evaluated)
+                train_tip_mask = np.isin(gt_tip_indices_in_full_cloud[:num_tips_to_eval], train_indices)
+                test_tip_mask = np.isin(gt_tip_indices_in_full_cloud[:num_tips_to_eval], test_indices)
 
                 # Compute EPE for train tips
                 if train_tip_mask.sum() > 0:
@@ -655,25 +698,27 @@ def track_tips_with_warper(
                 if test_tip_mask.sum() > 0:
                     test_epe = epe_per_tip[test_tip_mask].mean()
                     epe_values_test.append(test_epe)
-                    # Store test tip coordinates for AccS/AccR
-                    warped_coords_test.append(warped_tip_coords[test_tip_mask])
-                    gt_coords_test.append(gt_tip_coords[test_tip_mask])
+                    # Store ALL tracked test tips for AccS/AccR (not just evaluated ones)
+                    # This allows continuous flow computation even when GT is missing in some frames
+                    warped_coords_test.append(warped_tip_coords)
+                    gt_coords_test.append(gt_tip_coords)
                 else:
                     epe_values_test.append(None)
-                    warped_coords_test.append(None)
+                    # Still store warped coords for continuous tracking, but no GT
+                    warped_coords_test.append(warped_tip_coords)
                     gt_coords_test.append(None)
         else:
             logging.warning(
-                f"Timepoint {t_idx}: Tip count mismatch "
-                f"(warped: {len(warped_tip_coords)}, GT: {len(gt_tip_coords)})"
+                f"Timepoint {t_idx}: No tips to evaluate (warped: {num_warped_tips}, GT: {num_gt_tips})"
             )
             epe_values_all.append(None)
-            warped_coords_all.append(None)
+            # Still store warped coords for continuous tracking
+            warped_coords_all.append(warped_tip_coords if num_warped_tips > 0 else None)
             gt_coords_all.append(None)
             if point_splits:
                 epe_values_train.append(None)
                 epe_values_test.append(None)
-                warped_coords_test.append(None)
+                warped_coords_test.append(warped_tip_coords if num_warped_tips > 0 else None)
                 gt_coords_test.append(None)
 
     result = {
@@ -780,6 +825,10 @@ def compute_metrics_for_epoch(args, epoch_num):
     pred_tips_list = []
     gt_tips_list = []
 
+    # For nearest neighbor EPE fallback, we need full predicted point clouds
+    # (not split into train/test)
+    pred_points_full_list = []
+
     # Load all meshes and compute per-timestep metrics
     for i, (pred_file, gt_path) in enumerate(zip(pred_files, gt_paths)):
         pred_path = os.path.join(pred_mesh_dir, pred_file)
@@ -843,6 +892,9 @@ def compute_metrics_for_epoch(args, epoch_num):
         except Exception as e:
             logging.error(f"Error loading predicted mesh {pred_file}: {e}")
             continue
+
+        # Save full predicted points for nearest neighbor EPE computation
+        pred_points_full_list.append(pred_points)
 
         # Apply point splits if provided
         if point_splits:
@@ -1200,7 +1252,7 @@ def compute_metrics_for_epoch(args, epoch_num):
                 import traceback
                 logging.error(f"Error computing warper-based tip EPE: {e}")
                 logging.error(f"Traceback: {traceback.format_exc()}")
-                logging.warning("Falling back to skipping tip EPE computation")
+                logging.warning("Skipping tip EPE computation")
                 metrics_json["train"]["num_timesteps_with_tips"] = 0
                 metrics_json["train"]["mean_tip_epe"] = None
                 metrics_json["train"]["std_tip_epe"] = None
@@ -1380,11 +1432,20 @@ def compute_metrics_for_epoch(args, epoch_num):
                         continue
 
                     # Flow = position at t+1 minus position at t
-                    # Need to match tips across frames - use first N tips that exist in both frames
-                    min_tips = min(len(warped_coords_test[i]), len(warped_coords_test[i+1]))
+                    # Match tips across frames - use minimum of:
+                    # 1. Number of warped tips at both frames (for pred flow)
+                    # 2. Number of GT tips at both frames (for GT flow)
+                    num_warped_tips = min(len(warped_coords_test[i]), len(warped_coords_test[i+1]))
+                    num_gt_tips = min(len(gt_coords_test[i]), len(gt_coords_test[i+1]))
 
-                    pred_flow = warped_coords_test[i+1][:min_tips] - warped_coords_test[i][:min_tips]
-                    gt_flow = gt_coords_test[i+1][:min_tips] - gt_coords_test[i][:min_tips]
+                    # We can only compute flow for tips that have GT in both frames
+                    num_tips_to_eval = min(num_warped_tips, num_gt_tips)
+
+                    if num_tips_to_eval == 0:
+                        continue
+
+                    pred_flow = warped_coords_test[i+1][:num_tips_to_eval] - warped_coords_test[i][:num_tips_to_eval]
+                    gt_flow = gt_coords_test[i+1][:num_tips_to_eval] - gt_coords_test[i][:num_tips_to_eval]
 
                     # Convert to tensors for scene_flow_metrics
                     pred_flow_tensor = torch.from_numpy(pred_flow).float()
@@ -1431,10 +1492,16 @@ def compute_metrics_for_epoch(args, epoch_num):
                     if gt_coords_all[i] is None or gt_coords_all[i+1] is None:
                         continue
 
-                    min_tips = min(len(warped_coords_all[i]), len(warped_coords_all[i+1]))
+                    # Match tips across frames - handle variable GT tip counts
+                    num_warped_tips = min(len(warped_coords_all[i]), len(warped_coords_all[i+1]))
+                    num_gt_tips = min(len(gt_coords_all[i]), len(gt_coords_all[i+1]))
+                    num_tips_to_eval = min(num_warped_tips, num_gt_tips)
 
-                    pred_flow = warped_coords_all[i+1][:min_tips] - warped_coords_all[i][:min_tips]
-                    gt_flow = gt_coords_all[i+1][:min_tips] - gt_coords_all[i][:min_tips]
+                    if num_tips_to_eval == 0:
+                        continue
+
+                    pred_flow = warped_coords_all[i+1][:num_tips_to_eval] - warped_coords_all[i][:num_tips_to_eval]
+                    gt_flow = gt_coords_all[i+1][:num_tips_to_eval] - gt_coords_all[i][:num_tips_to_eval]
 
                     pred_flow_tensor = torch.from_numpy(pred_flow).float()
                     gt_flow_tensor = torch.from_numpy(gt_flow).float()
