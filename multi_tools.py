@@ -756,6 +756,7 @@ class Trainer:
                 adjust_input_dps, self.template_time, requires_grad=True
             )
             acce_mean, ks_loss_mean, energy_mean = self.comput_kL_L2()
+            self.decoder.warper.clean_grads()  # Free gradient memory immediately after use
         else:
             pred_pts = self.decoder(
                 adjust_input_dps, self.template_time, requires_grad=False
@@ -1230,6 +1231,7 @@ class Trainer_woadjust:
         if (self.epoch_velo != -1) and (epoch > self.epoch_velo):
             pred_pts = self.decoder(input_dps, self.template_time, requires_grad=True)
             acce_mean, ks_loss_mean, energy_mean = self.comput_kL_L2()
+            self.decoder.warper.clean_grads()  # Free gradient memory immediately after use
         else:
             pred_pts = self.decoder(input_dps, self.template_time, requires_grad=False)
 
