@@ -17,6 +17,7 @@ class DeformSamples(torch.utils.data.Dataset):
         use_dense=False,
         split_file=None,
         use_train_points=True,
+        interp_stride=None,
     ):
         """
         Pheno4D dataset loader for plant sequences.
@@ -26,9 +27,14 @@ class DeformSamples(torch.utils.data.Dataset):
             start_idx: Starting frame index (default: 0)
             gap: Number of consecutive frames to include (None = use all available frames)
             train_step: Sampling step for temporal sequence (1 = all frames, 2 = every other frame, etc.)
+                       Note: ignored if interp_stride is set
             use_dense: Whether to use dense_pc (True) or sparse_pc (False)
             split_file: Path to JSON file with train/test point splits (optional)
             use_train_points: If split_file provided, use train points (True) or test points (False)
+            interp_stride: If set, enables interpolation mode where all timepoints are loaded but only
+                          every Nth timepoint (by position, not day number) is used for training.
+                          E.g., interp_stride=2 means position 0,2,4,... are train, position 1,3,5,... are test.
+                          Overrides train_step when set.
         """
         pc_folder = "dense_pc" if use_dense else "sparse_pc"
         pc_path = os.path.join(filename, pc_folder)
@@ -66,17 +72,36 @@ class DeformSamples(torch.utils.data.Dataset):
         if total_lens == 0:
             raise ValueError(f"No .ply files found in {pc_path}")
 
+        # Store interpolation stride setting
+        self.interp_stride = interp_stride
+
         # Apply start_idx and gap filtering (similar to data_wmw.py)
+        # In interpolation mode, load ALL timepoints but mark which are for training
         if gap is not None:
             end_idx = min(start_idx + gap, total_lens)
-            sub_files = sub_files[start_idx:end_idx:train_step]
+            if interp_stride is not None:
+                # Interpolation mode: load all timepoints in the gap
+                sub_files = sub_files[start_idx:end_idx]
+            else:
+                # Normal mode: use train_step to filter
+                sub_files = sub_files[start_idx:end_idx:train_step]
         else:
-            sub_files = sub_files[start_idx::train_step]
+            if interp_stride is not None:
+                # Interpolation mode: load all timepoints
+                sub_files = sub_files[start_idx:]
+            else:
+                # Normal mode: use train_step to filter
+                sub_files = sub_files[start_idx::train_step]
 
-        print(
-            f"Filtered sub_files (start_idx={start_idx}, gap={gap}, train_step={train_step}): ",
-            sub_files,
-        )
+        if interp_stride is not None:
+            print(
+                f"Interpolation mode: loaded all timepoints (start_idx={start_idx}, gap={gap}, interp_stride={interp_stride})"
+            )
+        else:
+            print(
+                f"Filtered sub_files (start_idx={start_idx}, gap={gap}, train_step={train_step}): ",
+                sub_files,
+            )
 
         if len(sub_files) == 0:
             raise ValueError(
@@ -86,6 +111,7 @@ class DeformSamples(torch.utils.data.Dataset):
         self.train_xx = []
         self.train_nn = []
         self.normalized_times = []
+        self.is_train_timestep = []  # Track which timesteps are for training (interpolation mode)
 
         # Load point splits if provided
         self.split_file = split_file
@@ -116,6 +142,15 @@ class DeformSamples(torch.utils.data.Dataset):
             # Normalize time to [0, 1]
             normalized_time = (timestamp - min_time) / time_range
             self.normalized_times.append(torch.tensor(normalized_time))
+
+            # Track if this timestep is for training (interpolation mode)
+            if self.interp_stride is not None:
+                # In interpolation mode: position 0, stride, 2*stride, ... are training
+                is_train = (i % self.interp_stride) == 0
+                self.is_train_timestep.append(is_train)
+            else:
+                # In normal mode: all loaded timesteps are for training
+                self.is_train_timestep.append(True)
 
             full_name = os.path.join(pc_path, sub_file)
 
@@ -248,6 +283,17 @@ class DeformSamples(torch.utils.data.Dataset):
         for idx in range(int(self.lens)):
             self.train_xx[idx] = (self.train_xx[idx] - self.mean) * self.scale
 
+        # Print summary of train/test split in interpolation mode
+        if self.interp_stride is not None:
+            train_count = sum(self.is_train_timestep)
+            test_count = len(self.is_train_timestep) - train_count
+            print(f"\nInterpolation mode summary:")
+            print(f"  Total timesteps: {len(self.is_train_timestep)}")
+            print(f"  Training timesteps: {train_count}")
+            print(f"  Testing timesteps: {test_count}")
+            print(f"  Training indices: {[i for i, is_train in enumerate(self.is_train_timestep) if is_train]}")
+            print(f"  Testing indices: {[i for i, is_train in enumerate(self.is_train_timestep) if not is_train]}")
+
     def __len__(self):
         return self.lens
 
@@ -261,11 +307,18 @@ class DeformSamples(torch.utils.data.Dataset):
             return self.leaf_tips[idx]
         return torch.tensor([], dtype=torch.long)
 
+    def is_training_timestep(self, idx):
+        """Check if a timestep is used for training (relevant in interpolation mode)."""
+        if idx < len(self.is_train_timestep):
+            return self.is_train_timestep[idx]
+        return True  # Default to training if not set
+
     def __getitem__(self, idx):
         pts = self.train_xx[idx]
         nms = self.train_nn[idx]
         normalized_time = self.normalized_times[idx]
-        return {"pts": pts, "nms": nms, "normed_time": normalized_time}
+        is_train = self.is_train_timestep[idx] if idx < len(self.is_train_timestep) else True
+        return {"pts": pts, "nms": nms, "normed_time": normalized_time, "is_train": is_train}
 
 
 if __name__ == "__main__":
