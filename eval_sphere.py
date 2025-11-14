@@ -268,6 +268,7 @@ def load_model_latents(args, epoch_num):
         start_idx = 0
         gap = 8
         stride = 1
+        interp_stride = None
 
         for i, part in enumerate(parts):
             if part == "start" and i + 2 < len(parts) and parts[i + 1] == "id":
@@ -275,7 +276,11 @@ def load_model_latents(args, epoch_num):
             elif part == "gap" and i + 1 < len(parts):
                 gap = int(parts[i + 1])
             elif part == "stride" and i + 1 < len(parts):
-                stride = int(parts[i + 1])
+                # Check if this is interp_stride or regular stride
+                if i > 0 and parts[i - 1] == "interp":
+                    interp_stride = int(parts[i + 1])
+                else:
+                    stride = int(parts[i + 1])
 
         # Use the object_name as the dataset path
         specs["ShapePath"] = args.object_name
@@ -289,6 +294,13 @@ def load_model_latents(args, epoch_num):
             logging.warning("Using all points for normalization (may differ from training)")
             split_file = None
 
+        # In interpolation mode, use TEST points for evaluation
+        use_train_points = (interp_stride is None)
+
+        if interp_stride is not None:
+            logging.info(f"Interpolation mode detected (interp_stride={interp_stride})")
+            logging.info("Evaluating on TEST timesteps with TEST points")
+
         sdf_dataset = data_pheno4d.DeformSamples(
             specs["ShapePath"],
             start_idx=start_idx,
@@ -296,7 +308,8 @@ def load_model_latents(args, epoch_num):
             train_step=stride,
             use_dense=False,
             split_file=split_file,  # Use same split as training for consistent normalization
-            use_train_points=True,  # Use train points (same as training)
+            use_train_points=use_train_points,  # Use test points in interpolation mode
+            interp_stride=interp_stride,
         )
     else:
         raise ValueError(
@@ -499,14 +512,27 @@ def move_canonic_shape(
     if hasattr(decoder.warper, 'clean_grads'):
         decoder.warper.clean_grads()
 
+    # In interpolation mode, only evaluate on TEST timesteps
+    eval_indices = []
+    for idx in range(len(sdf_dataset)):
+        if not sdf_dataset.is_training_timestep(idx):
+            eval_indices.append(idx)
+
+    # If no test timesteps (normal mode), evaluate on all
+    if len(eval_indices) == 0:
+        eval_indices = list(range(len(sdf_dataset)))
+        logging.info("Normal mode: Evaluating on all timesteps")
+    else:
+        logging.info(f"Interpolation mode: Evaluating on {len(eval_indices)} TEST timesteps: {eval_indices}")
+
     if methods == "4DSDF":
 
         os.makedirs(export_path, mode=0o777, exist_ok=True)
         # clear_folder(export_path)
         d_s = sdf_dataset.scale
         d_m = sdf_dataset.mean
-        this_idx = 0
-        for back_time in backward_time:
+        for this_idx in eval_indices:
+            back_time = backward_time[this_idx]
             sub_file = sdf_dataset.sub_files[this_idx]
             print("sub_file: ", sub_file)
             _, index = find_closest_number(sdf_dataset.normalized_times, back_time)
@@ -537,7 +563,6 @@ def move_canonic_shape(
             if hasattr(decoder.warper, 'clean_grads'):
                 decoder.warper.clean_grads()
             torch.cuda.empty_cache()
-            this_idx = this_idx + 1
     else:
         templat_full_path = os.path.join(export_path, "normalized_tempt.ply")
 
@@ -552,8 +577,8 @@ def move_canonic_shape(
         # clear_folder(export_path)  # Don't clear folder to preserve normalized template
 
         time.sleep(3)
-        this_idx = 0
-        for back_time in backward_time:
+        for this_idx in eval_indices:
+            back_time = backward_time[this_idx]
             sub_file = sdf_dataset.sub_files[this_idx]
             with torch.no_grad():
                 chunks = torch.chunk(temp_v, num_chunks, dim=0)
@@ -577,7 +602,6 @@ def move_canonic_shape(
             if hasattr(decoder.warper, 'clean_grads'):
                 decoder.warper.clean_grads()
             torch.cuda.empty_cache()
-            this_idx = this_idx + 1
 
 
 if __name__ == "__main__":

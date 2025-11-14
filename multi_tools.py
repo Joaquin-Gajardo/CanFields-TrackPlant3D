@@ -109,6 +109,18 @@ def build_args():
         required=False,
         help="Path to JSON file with train/test point splits (optional, for pheno4d)",
     )
+    arg_parser.add_argument(
+        "--interp_stride",
+        "-is",
+        dest="interp_stride",
+        type=int,
+        default=None,
+        required=False,
+        help="Interpolation stride for temporal interpolation experiments. "
+        + "If set, loads all timepoints but only trains on every Nth timepoint. "
+        + "E.g., --interp_stride 2 trains on positions 0,2,4,... and tests on 1,3,5,... "
+        + "(only for pheno4d dataset)",
+    )
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
 
@@ -355,21 +367,41 @@ def load_dataset(args, specs, ajust_coes=None, split_file=None, use_train_points
         start_idx = clip_coes[0]
         gap = clip_coes[1]
         stride = clip_coes[2]
+
+        # Check if interpolation mode is enabled
+        interp_stride = getattr(args, 'interp_stride', None)
+
         sdf_dataset = data_pheno4d.DeformSamples(
             shapepath, start_idx=start_idx, gap=gap, train_step=stride, use_dense=False,
-            split_file=split_file, use_train_points=use_train_points
+            split_file=split_file, use_train_points=use_train_points,
+            interp_stride=interp_stride
         )
-        obj_name = (
-            shapepath.split("/")[-1]
-            + "_P4D_full_l2_"
-            + coe_path
-            + "_start_id_"
-            + str(start_idx)
-            + "_gap_"
-            + str(gap)
-            + "_stride_"
-            + str(stride)
-        )
+
+        # Build object name with interpolation info if applicable
+        if interp_stride is not None:
+            obj_name = (
+                shapepath.split("/")[-1]
+                + "_P4D_full_l2_"
+                + coe_path
+                + "_start_id_"
+                + str(start_idx)
+                + "_gap_"
+                + str(gap)
+                + "_interp_stride_"
+                + str(interp_stride)
+            )
+        else:
+            obj_name = (
+                shapepath.split("/")[-1]
+                + "_P4D_full_l2_"
+                + coe_path
+                + "_start_id_"
+                + str(start_idx)
+                + "_gap_"
+                + str(gap)
+                + "_stride_"
+                + str(stride)
+            )
 
     return sdf_dataset, obj_name
 
@@ -515,6 +547,13 @@ class Trainer:
         self.epoch_velo = int(args.epoch_velo)
         self.args = args
 
+        # Build list of training timestep indices (for interpolation mode)
+        self.train_timestep_indices = []
+        for idx in range(self.start_idx, self.end_idx + 1):
+            if sdf_dataset.is_training_timestep(idx):
+                self.train_timestep_indices.append(idx)
+        print(f"Training on {len(self.train_timestep_indices)} timesteps: {self.train_timestep_indices}")
+
     def load_optimizer(self):
         optimizer_all = torch.optim.Adam(
             [
@@ -648,9 +687,8 @@ class Trainer:
         return code_loss
 
     def get_pts(self, epoch):
-        rand_scene_id = random.sample(set(range(self.start_idx, self.end_idx + 1)), 1)[
-            0
-        ]
+        # Sample from training timesteps only (respects interpolation mode)
+        rand_scene_id = random.sample(self.train_timestep_indices, 1)[0]
         src_dps = self.sdf_dataset[rand_scene_id]
         src_pts = src_dps["pts"].cuda()
         src_nms = src_dps["nms"].cuda()
@@ -1076,6 +1114,13 @@ class Trainer_woadjust:
         self.epoch_velo = int(args.epoch_velo)
         self.experiment_directory = experiment_directory
 
+        # Build list of training timestep indices (for interpolation mode)
+        self.train_timestep_indices = []
+        for idx in range(self.start_idx, self.end_idx + 1):
+            if sdf_dataset.is_training_timestep(idx):
+                self.train_timestep_indices.append(idx)
+        print(f"Training on {len(self.train_timestep_indices)} timesteps: {self.train_timestep_indices}")
+
     def load_optimizer(self):
         optimizer_all = torch.optim.Adam(
             [
@@ -1138,9 +1183,8 @@ class Trainer_woadjust:
         return temp_code_loss
 
     def get_pts(self):
-        rand_scene_id = random.sample(set(range(self.start_idx, self.end_idx + 1)), 1)[
-            0
-        ]
+        # Sample from training timesteps only (respects interpolation mode)
+        rand_scene_id = random.sample(self.train_timestep_indices, 1)[0]
         src_dps = self.sdf_dataset[rand_scene_id]
         src_pts = src_dps["pts"].cuda()
         src_nms = src_dps["nms"].cuda()

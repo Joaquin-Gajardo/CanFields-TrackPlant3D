@@ -278,6 +278,7 @@ def get_ground_truth_paths(args):
         start_idx = 0
         gap = 8
         stride = 1
+        interp_stride = None
 
         for i, part in enumerate(parts):
             if part == "start" and i + 2 < len(parts) and parts[i + 1] == "id":
@@ -285,14 +286,33 @@ def get_ground_truth_paths(args):
             elif part == "gap" and i + 1 < len(parts):
                 gap = int(parts[i + 1])
             elif part == "stride" and i + 1 < len(parts):
-                stride = int(parts[i + 1])
+                # Check if this is interp_stride or regular stride
+                if i > 0 and parts[i - 1] == "interp":
+                    interp_stride = int(parts[i + 1])
+                else:
+                    stride = int(parts[i + 1])
 
         # Apply same filtering as dataset
         end_idx = min(start_idx + gap, len(gt_files))
-        gt_files = gt_files[start_idx:end_idx:stride]
+
+        if interp_stride is not None:
+            # Interpolation mode: load all files, then filter to TEST timesteps
+            all_files = gt_files[start_idx:end_idx]
+            # Only keep TEST timesteps (positions 1, 3, 5, ...)
+            test_indices = [i for i in range(len(all_files)) if i % interp_stride != 0]
+            test_gt_files = [all_files[i] for i in test_indices]
+            logging.info(f"Interpolation mode detected (interp_stride={interp_stride})")
+            logging.info(f"  Total timesteps: {len(all_files)}")
+            logging.info(f"  Evaluating on {len(test_gt_files)} TEST timesteps: {test_indices}")
+            gt_files = test_gt_files
+            original_indices = test_indices
+        else:
+            # Normal mode: apply stride filtering
+            gt_files = gt_files[start_idx:end_idx:stride]
+            original_indices = list(range(len(gt_files)))
 
         gt_paths = [os.path.join(pc_path, f) for f in gt_files]
-        return gt_paths, gt_files
+        return gt_paths, gt_files, original_indices
     else:
         raise NotImplementedError(
             f"Ground truth loading not implemented for {args.dataset_name}"
@@ -544,7 +564,8 @@ def track_tips_with_warper(
     scale,
     mean,
     normalized_times,
-    point_splits=None
+    point_splits=None,
+    original_indices=None
 ):
     """
     Track leaf tips through time using the learned warper.
@@ -562,11 +583,16 @@ def track_tips_with_warper(
         mean: Normalization mean
         normalized_times: Tensor of normalized time values for each frame
         point_splits: Optional dict with train/test splits
+        original_indices: Optional list mapping filtered indices to original indices (for interpolation mode)
 
     Returns:
         Dictionary with tracked tips and EPE values per split
     """
     logging.info("Tracking leaf tips with warper...")
+
+    # If original_indices not provided, assume sequential (normal mode)
+    if original_indices is None:
+        original_indices = list(range(len(gt_paths)))
 
     # Dictionary to track tips: {tip_id: (first_appear_idx, first_appear_coords, first_appear_time)}
     tracked_tips = {}
@@ -686,7 +712,9 @@ def track_tips_with_warper(
                 gt_points, _, _ = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
                 gt_points, _, _ = pcu.deduplicate_point_cloud(gt_points, 1e-15, return_index=True)
 
-                timepoint_data = point_splits["timepoints"][t_idx]
+                # Map to original timepoint index (important for interpolation mode)
+                original_t_idx = original_indices[t_idx]
+                timepoint_data = point_splits["timepoints"][original_t_idx]
                 train_indices = np.array(timepoint_data["train_indices"], dtype=np.int64)
                 test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
 
@@ -783,7 +811,7 @@ def compute_metrics_for_epoch(args, epoch_num):
         point_splits = load_point_splits(split_file)
 
     # Get ground truth paths
-    gt_paths, gt_files = get_ground_truth_paths(args)
+    gt_paths, gt_files, original_indices = get_ground_truth_paths(args)
 
     # Get predicted mesh paths
     pred_files = [f for f in os.listdir(pred_mesh_dir) if f.endswith(".ply")]
@@ -869,7 +897,9 @@ def compute_metrics_for_epoch(args, epoch_num):
         # Determine number of points to sample from prediction
         if point_splits:
             # If using point splits, we need to sample enough points to match GT test set size
-            timepoint_data = point_splits["timepoints"][i]
+            # Map to original timepoint index (important for interpolation mode)
+            original_i = original_indices[i]
+            timepoint_data = point_splits["timepoints"][original_i]
             train_indices = np.array(timepoint_data["train_indices"], dtype=np.int64)
             test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
 
@@ -1223,7 +1253,7 @@ def compute_metrics_for_epoch(args, epoch_num):
 
                 # Track tips with warper
                 tip_epe_results = track_tips_with_warper(
-                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits
+                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits, original_indices
                 )
 
                 # Clean accumulated gradients after tracking
@@ -1370,6 +1400,14 @@ def compute_metrics_for_epoch(args, epoch_num):
                     if not os.path.exists(split_file):
                         split_file = None
 
+                # Extract interp_stride from experiment name (if present)
+                parts = args.experiment_name.split("_")
+                interp_stride_for_dataset = None
+                for i, part in enumerate(parts):
+                    if part == "stride" and i + 1 < len(parts):
+                        if i > 0 and parts[i - 1] == "interp":
+                            interp_stride_for_dataset = int(parts[i + 1])
+
                 sdf_dataset = data_pheno4d.DeformSamples(
                     args.object_name,
                     start_idx=0,
@@ -1377,7 +1415,8 @@ def compute_metrics_for_epoch(args, epoch_num):
                     train_step=1,
                     use_dense=False,
                     split_file=split_file,
-                    use_train_points=True,
+                    use_train_points=True,  # For dataset normalization, doesn't matter in interpolation mode
+                    interp_stride=interp_stride_for_dataset,
                 )
 
                 # Load decoder model
@@ -1390,7 +1429,7 @@ def compute_metrics_for_epoch(args, epoch_num):
 
                 # Track tips with warper (no splits)
                 tip_epe_results = track_tips_with_warper(
-                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits=None
+                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits=None, original_indices=original_indices
                 )
 
                 # Clean accumulated gradients after tracking
