@@ -23,7 +23,7 @@ from collections import defaultdict
 from pathlib import Path
 
 
-def find_latest_experiments(base_dir, sequence_filter=None, filter_type=None):
+def find_latest_experiments(base_dir, sequence_filter=None, filter_type=None, experiment_type=None):
     """
     Find the latest experiment for each sequence.
 
@@ -31,6 +31,10 @@ def find_latest_experiments(base_dir, sequence_filter=None, filter_type=None):
         base_dir: Base directory to search (e.g., results/pheno4d/4DSDF)
         sequence_filter: List of specific sequences to include (None = all)
         filter_type: "plants" for full plants (3 parts), "organs" for organs (4+ parts)
+        experiment_type: Filter experiments by type:
+            - "interp" or "interpolation": Only interpolation experiments (with _interp_stride_N)
+            - "regular" or "standard": Only regular experiments (without _interp_stride_N)
+            - None: All experiments (default)
 
     Returns:
         Dictionary mapping sequence_name -> latest_experiment_path
@@ -75,11 +79,21 @@ def find_latest_experiments(base_dir, sequence_filter=None, filter_type=None):
 
                 # Check if it starts with timestamp pattern YYYYMMDD_HHMMSS
                 if len(exp_name) >= 15 and exp_name[:8].isdigit() and exp_name[9:15].isdigit():
+                    # Apply experiment type filter
+                    is_interp = "_interp_stride_" in exp_name
+
+                    if experiment_type:
+                        if experiment_type in ["interp", "interpolation"] and not is_interp:
+                            continue
+                        elif experiment_type in ["regular", "standard"] and is_interp:
+                            continue
+
                     experiments_by_sequence[sequence_name].append({
                         "path": exp_dir,
                         "timestamp": exp_name[:15],  # YYYYMMDD_HHMMSS
                         "sequence": sequence_name,
-                        "crop": crop_dir.name
+                        "crop": crop_dir.name,
+                        "is_interp": is_interp
                     })
 
     # Get latest experiment for each sequence
@@ -224,6 +238,81 @@ def run_eval_metrics(experiment_path, object_name, epoch, method, dataset="pheno
         }
 
 
+def find_available_epochs(experiment_path):
+    """
+    Find all available checkpoints in an experiment directory.
+
+    Args:
+        experiment_path: Path to experiment directory
+
+    Returns:
+        List of available epoch numbers (sorted descending)
+    """
+    checkpoints_dir = Path(experiment_path) / "checkpoints"
+    if not checkpoints_dir.exists():
+        return []
+
+    epochs = []
+
+    # Check for checkpoints in ModelParameters subdirectory (standard structure)
+    model_params_dir = checkpoints_dir / "ModelParameters"
+    if model_params_dir.exists():
+        for ckpt_file in model_params_dir.glob("*.pth"):
+            # Extract epoch number from filename: 15000.pth
+            try:
+                epoch = int(ckpt_file.stem)
+                epochs.append(epoch)
+            except ValueError:
+                continue
+    else:
+        # Fallback: check directly in checkpoints dir (for older structure)
+        for ckpt_file in checkpoints_dir.glob("ModelParameters*.pth"):
+            # Extract epoch number from filename: ModelParameters15000.pth
+            try:
+                epoch_str = ckpt_file.stem.replace("ModelParameters", "")
+                epoch = int(epoch_str)
+                epochs.append(epoch)
+            except ValueError:
+                continue
+
+    # Sort descending (latest first)
+    return sorted(epochs, reverse=True)
+
+
+def find_best_epoch(experiment_path, requested_epoch):
+    """
+    Find the best available epoch to use.
+
+    If requested_epoch is available, use it.
+    Otherwise, fall back to the closest epoch before it.
+
+    Args:
+        experiment_path: Path to experiment directory
+        requested_epoch: Requested epoch number
+
+    Returns:
+        Tuple of (epoch_to_use, is_fallback)
+        - epoch_to_use: The epoch number to use (or None if none available)
+        - is_fallback: True if we're using a fallback epoch
+    """
+    available_epochs = find_available_epochs(experiment_path)
+
+    if not available_epochs:
+        return None, False
+
+    # Check if requested epoch is available
+    if requested_epoch in available_epochs:
+        return requested_epoch, False
+
+    # Find closest epoch that's <= requested_epoch
+    fallback_epochs = [e for e in available_epochs if e <= requested_epoch]
+    if fallback_epochs:
+        return fallback_epochs[0], True  # Already sorted descending
+
+    # If no epochs before requested_epoch, return None
+    return None, False
+
+
 def infer_object_path(sequence_name, crop_name):
     """
     Infer the object data path from sequence and crop names.
@@ -293,6 +382,12 @@ def main():
         default="pheno4d",
         help="Dataset name (default: pheno4d)"
     )
+    parser.add_argument(
+        "--experiment_type",
+        choices=["interp", "interpolation", "regular", "standard"],
+        default=None,
+        help="Filter by experiment type: 'interp'/'interpolation' for interpolation experiments, 'regular'/'standard' for standard experiments"
+    )
 
     args = parser.parse_args()
 
@@ -307,6 +402,7 @@ def main():
     print(f"Filter: {args.filter if args.filter else 'none'}")
     print(f"Epoch: {args.epoch}")
     print(f"Test only: {args.test_only}")
+    print(f"Experiment type: {args.experiment_type if args.experiment_type else 'all'}")
 
     # Load data splits if test_only is requested
     test_sequences = None
@@ -328,7 +424,8 @@ def main():
     latest_experiments = find_latest_experiments(
         method_dir,
         sequence_filter=args.sequences,
-        filter_type=args.filter
+        filter_type=args.filter,
+        experiment_type=args.experiment_type
     )
 
     # Filter by test sequences if requested
@@ -376,11 +473,32 @@ def main():
             })
             continue
 
+        # Find best available epoch (with fallback if requested epoch not available)
+        epoch_to_use, is_fallback = find_best_epoch(exp_info['path'], args.epoch)
+
+        if epoch_to_use is None:
+            print(f"❌ ERROR: No checkpoints found in {exp_info['path']}/checkpoints/")
+            print("Skipping...")
+            fail_count += 1
+            results.append({
+                "sequence": sequence_name,
+                "status": "failed",
+                "error_type": "missing_checkpoint",
+                "fix_command": None
+            })
+            continue
+
+        if is_fallback:
+            print(f"⚠️  Requested epoch {args.epoch} not available")
+            print(f"📌 Using fallback epoch: {epoch_to_use}")
+        else:
+            print(f"✓ Using requested epoch: {epoch_to_use}")
+
         # Run evaluation
         result = run_eval_metrics(
             exp_info['path'],
             object_path,
-            args.epoch,
+            epoch_to_use,
             args.method,  # Pass method name
             dataset=args.dataset,
             dry_run=args.dry_run
@@ -392,6 +510,8 @@ def main():
             results.append({
                 "sequence": sequence_name,
                 "experiment": exp_info['path'].name,
+                "epoch": epoch_to_use,
+                "is_fallback": is_fallback,
                 "status": "success",
                 "error_type": None,
                 "fix_command": None
@@ -401,6 +521,8 @@ def main():
             results.append({
                 "sequence": sequence_name,
                 "experiment": exp_info['path'].name,
+                "epoch": epoch_to_use,
+                "is_fallback": is_fallback,
                 "status": "failed",
                 "error_type": result.get("error_type"),
                 "fix_command": result.get("fix_command")
@@ -413,6 +535,13 @@ def main():
     print(f"Total experiments: {len(latest_experiments)}")
     print(f"✅ Successful (metrics saved): {success_count}")
     print(f"❌ Failed: {fail_count}")
+
+    # Show fallback epochs summary
+    fallback_results = [r for r in results if r.get("is_fallback") and r["status"] == "success"]
+    if fallback_results:
+        print(f"\n📌 Used fallback epochs (requested {args.epoch} not available): {len(fallback_results)}")
+        for r in fallback_results:
+            print(f"   {r['sequence']}: epoch {r['epoch']}")
 
     # Show failed experiments with fix commands
     failed_results = [r for r in results if r["status"] == "failed"]

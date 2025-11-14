@@ -27,19 +27,29 @@ import pandas as pd
 import numpy as np
 
 
-def aggregate_by_method(df, split='test'):
+def aggregate_by_method(df, split='test', min_timesteps=None):
     """
     Aggregate metrics by method (across sequences).
 
     Args:
         df: DataFrame with metrics
         split: Which split to use ('test' or 'train')
+        min_timesteps: Minimum number of timesteps to include (None = no filter)
 
     Returns:
         Dictionary mapping method -> statistics
     """
     # Filter by split
     df_split = df[df['split'] == split].copy()
+
+    # Filter by minimum timesteps if specified
+    if min_timesteps is not None and 'num_timesteps' in df_split.columns:
+        original_count = len(df_split)
+        df_split = df_split[df_split['num_timesteps'] >= min_timesteps].copy()
+        filtered_count = len(df_split)
+        if filtered_count < original_count:
+            print(f"Filtered {original_count - filtered_count} rows with < {min_timesteps} timesteps")
+            print(f"Remaining: {filtered_count} rows")
 
     # Group by method and sequence, then compute mean per sequence
     # This gives us one value per sequence per method
@@ -306,6 +316,12 @@ def main():
         action="store_true",
         help="Print only the LaTeX table header"
     )
+    parser.add_argument(
+        "--min_timesteps",
+        type=int,
+        default=None,
+        help="Minimum number of timesteps to include sequences (default: no filter)"
+    )
 
     args = parser.parse_args()
 
@@ -334,9 +350,17 @@ def main():
     print(f"  Methods: {', '.join(df['method'].unique())}")
     print(f"  Sequences: {df['sequence'].nunique()}")
 
+    # Show timestep distribution if filtering is requested
+    if args.min_timesteps is not None and 'num_timesteps' in df.columns:
+        print(f"\nTimestep distribution:")
+        print(f"  Min: {df['num_timesteps'].min()}")
+        print(f"  Max: {df['num_timesteps'].max()}")
+        print(f"  Mean: {df['num_timesteps'].mean():.1f}")
+        print(f"  Sequences with >= {args.min_timesteps} timesteps: {len(df[df['num_timesteps'] >= args.min_timesteps])}/{len(df)}")
+
     # Aggregate by method
     print(f"\nAggregating by method (split: {args.split})...")
-    method_stats = aggregate_by_method(df, split=args.split)
+    method_stats = aggregate_by_method(df, split=args.split, min_timesteps=args.min_timesteps)
 
     # Filter methods if specified
     if args.methods:
