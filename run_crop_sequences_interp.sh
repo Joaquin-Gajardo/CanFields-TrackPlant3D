@@ -15,7 +15,8 @@
 #   sequences: (optional) run only these specific sequences
 
 # Import the sequence definitions from run_crop_sequences.sh
-source run_crop_sequences.sh --help 2>/dev/null || true
+# (We don't actually source it since we redefine all sequences below)
+# source run_crop_sequences.sh 2>/dev/null || true
 
 # Get arguments
 CROP=$1
