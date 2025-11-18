@@ -1292,7 +1292,8 @@ def compute_metrics_for_epoch(args, epoch_num):
                 train_epe_tensor = torch.tensor(train_epe_values)
                 metrics_json["train"]["num_timesteps_with_tips"] = len(train_epe_values)
                 metrics_json["train"]["mean_tip_epe"] = float(train_epe_tensor.mean().item())
-                metrics_json["train"]["std_tip_epe"] = float(train_epe_tensor.std().item())
+                std_val = float(train_epe_tensor.std().item())
+                metrics_json["train"]["std_tip_epe"] = None if (np.isnan(std_val) or np.isinf(std_val)) else std_val
                 metrics_json["train"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["train"] if v is not None]
                 logging.info(
                     f"Train Set - Leaf Tip EPE (warper): {metrics_json['train']['mean_tip_epe']:.6f}"
@@ -1310,7 +1311,8 @@ def compute_metrics_for_epoch(args, epoch_num):
                 test_epe_tensor = torch.tensor(test_epe_values)
                 metrics_json["test"]["num_timesteps_with_tips"] = len(test_epe_values)
                 metrics_json["test"]["mean_tip_epe"] = float(test_epe_tensor.mean().item())
-                metrics_json["test"]["std_tip_epe"] = float(test_epe_tensor.std().item())
+                std_val = float(test_epe_tensor.std().item())
+                metrics_json["test"]["std_tip_epe"] = None if (np.isnan(std_val) or np.isinf(std_val)) else std_val
                 metrics_json["test"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["test"] if v is not None]
                 logging.info(
                     f"Test Set - Leaf Tip EPE (warper): {metrics_json['test']['mean_tip_epe']:.6f}"
@@ -1452,7 +1454,8 @@ def compute_metrics_for_epoch(args, epoch_num):
                 epe_tensor = torch.tensor(epe_values)
                 metrics_json["num_timesteps_with_tips"] = len(epe_values)
                 metrics_json["mean_tip_epe"] = float(epe_tensor.mean().item())
-                metrics_json["std_tip_epe"] = float(epe_tensor.std().item())
+                std_val = float(epe_tensor.std().item())
+                metrics_json["std_tip_epe"] = None if (np.isnan(std_val) or np.isinf(std_val)) else std_val
                 metrics_json["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["all"] if v is not None]
                 logging.info(f"Leaf Tip EPE (warper): {metrics_json['mean_tip_epe']:.6f}")
             else:
