@@ -22,6 +22,7 @@ def collect_metrics_from_experiments(
     base_dir="results/pheno4d",
     epoch=None,
     metric_type="eval",  # "eval" or "training"
+    experiment_type=None,
 ):
     """
     Collect metrics from all experiments.
@@ -30,6 +31,10 @@ def collect_metrics_from_experiments(
         base_dir: Base results directory
         epoch: Specific epoch to collect (None = use summary or last available)
         metric_type: "eval" (from eval_metrics.py) or "training" (from training)
+        experiment_type: Filter experiments by type:
+            - "interp" or "interpolation": Only interpolation experiments (with _interp_stride_N)
+            - "regular" or "standard": Only regular experiments (without _interp_stride_N)
+            - None: All experiments (default)
 
     Returns:
         List of dictionaries containing experiment results
@@ -91,6 +96,15 @@ def collect_metrics_from_experiments(
                 crop = "unknown"
                 sequence = "unknown"
                 experiment_name = metrics_file.parent.parent.name
+
+            # Apply experiment type filter
+            is_interp = "_interp_stride_" in experiment_name
+
+            if experiment_type:
+                if experiment_type in ["interp", "interpolation"] and not is_interp:
+                    continue
+                elif experiment_type in ["regular", "standard"] and is_interp:
+                    continue
 
             # Handle summary files differently
             if "summary" in metrics_file.name:
@@ -538,6 +552,12 @@ def main():
         default="output/tables",
         help="Output directory for exported files (default: output/tables)",
     )
+    parser.add_argument(
+        "--experiment_type",
+        choices=["interp", "interpolation", "regular", "standard"],
+        default=None,
+        help="Filter by experiment type: 'interp'/'interpolation' for interpolation experiments, 'regular'/'standard' for standard experiments",
+    )
 
     args = parser.parse_args()
 
@@ -545,6 +565,7 @@ def main():
     print(f"Epoch: {args.epoch if args.epoch else 'latest/summary'}")
     print(f"Metric type: {args.metric_type}")
     print(f"Data split: {args.split}")
+    print(f"Experiment type: {args.experiment_type if args.experiment_type else 'all'}")
 
     # Load data splits config if not using 'all'
     splits_config = None
@@ -559,6 +580,7 @@ def main():
         base_dir=args.base_dir,
         epoch=args.epoch,
         metric_type=args.metric_type,
+        experiment_type=args.experiment_type,
     )
 
     if not results:
