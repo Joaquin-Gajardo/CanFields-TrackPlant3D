@@ -18,6 +18,45 @@ import numpy as np
 import pandas as pd
 
 
+def deduplicate_to_latest_experiments(results):
+    """
+    Keep only the latest experiment for each method-sequence combination.
+
+    When multiple experiments exist for the same method and sequence,
+    selects the one with the latest timestamp (extracted from experiment name).
+
+    Args:
+        results: List of result dictionaries
+
+    Returns:
+        List of deduplicated results (latest experiment per method-sequence)
+    """
+    from collections import defaultdict
+
+    # Group by (method, sequence, split)
+    grouped = defaultdict(list)
+    for result in results:
+        method = result.get("method", "unknown")
+        sequence = result.get("sequence", "unknown")
+        split = result.get("split", "all")
+        key = (method, sequence, split)
+        grouped[key].append(result)
+
+    # For each group, keep only the latest experiment
+    deduplicated = []
+    for key, group in grouped.items():
+        if len(group) == 1:
+            deduplicated.append(group[0])
+        else:
+            # Sort by experiment name (which starts with timestamp YYYYMMDD_HHMMSS)
+            # and take the latest
+            sorted_group = sorted(group, key=lambda x: x.get("experiment", ""), reverse=True)
+            latest = sorted_group[0]
+            deduplicated.append(latest)
+
+    return deduplicated
+
+
 def collect_metrics_from_experiments(
     base_dir="results/pheno4d",
     epoch=None,
@@ -610,6 +649,12 @@ def main():
     if not results:
         print("No results after filtering!")
         return
+
+    # Deduplicate: keep only latest experiment per method-sequence combination
+    results_before_dedup = len(results)
+    results = deduplicate_to_latest_experiments(results)
+    if results_before_dedup > len(results):
+        print(f"Deduplicated to {len(results)} experiments (removed {results_before_dedup - len(results)} older duplicates)")
 
     # Print summary statistics
     print_summary_stats(results)
