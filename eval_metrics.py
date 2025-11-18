@@ -698,22 +698,56 @@ def track_tips_with_warper(
             warped_to_eval = warped_tip_coords[:num_tips_to_eval]
             gt_to_eval = gt_tip_coords[:num_tips_to_eval]
 
-            epe_per_tip = np.linalg.norm(warped_to_eval - gt_to_eval, axis=1)
-            mean_epe = epe_per_tip.mean()
+            # Check if this is the first appearance for any tip
+            # Skip EPE computation for tips at their first appearance (like we skip first frame for CD/NC)
+            tips_to_include = []
+            for tip_id in range(num_tips_to_eval):
+                if tip_id in tracked_tips:
+                    first_appear_idx, _, _ = tracked_tips[tip_id]
+                    if t_idx != first_appear_idx:
+                        # Not the first appearance, include this tip
+                        tips_to_include.append(tip_id)
+
+            if len(tips_to_include) > 0:
+                # Compute EPE only for tips not at their first appearance
+                tips_to_include = np.array(tips_to_include)
+                epe_per_tip_filtered = np.linalg.norm(
+                    warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
+                    axis=1
+                )
+                mean_epe = epe_per_tip_filtered.mean()
+
+                # For split computation, we need EPE per tip (including None for skipped tips)
+                epe_per_tip = np.full(num_tips_to_eval, np.nan)
+                epe_per_tip[tips_to_include] = np.linalg.norm(
+                    warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
+                    axis=1
+                )
+            else:
+                # All tips are at their first appearance, skip this frame
+                mean_epe = None
+                epe_per_tip = np.full(num_tips_to_eval, np.nan)
+
             epe_values_all.append(mean_epe)
 
             # Store ALL warped tips (for continuous tracking), but only GT tips that exist
             warped_coords_all.append(warped_tip_coords)  # All tracked tips
             gt_coords_all.append(gt_tip_coords)  # Only GT tips at this frame
 
-            if num_warped_tips != num_gt_tips:
-                logging.info(
-                    f"Timepoint {t_idx}: Tracked {num_warped_tips} tips, GT has {num_gt_tips} tips, "
-                    f"evaluated {num_tips_to_eval} tips, Mean EPE = {mean_epe:.6f}"
-                )
+            if mean_epe is not None:
+                if num_warped_tips != num_gt_tips:
+                    logging.info(
+                        f"Timepoint {t_idx}: Tracked {num_warped_tips} tips, GT has {num_gt_tips} tips, "
+                        f"evaluated {len(tips_to_include)} tips (skipped {num_tips_to_eval - len(tips_to_include)} at first appearance), Mean EPE = {mean_epe:.6f}"
+                    )
+                else:
+                    logging.info(
+                        f"Timepoint {t_idx}: Tracked {num_warped_tips} tips, "
+                        f"evaluated {len(tips_to_include)} tips (skipped {num_tips_to_eval - len(tips_to_include)} at first appearance), Mean EPE = {mean_epe:.6f}"
+                    )
             else:
                 logging.info(
-                    f"Timepoint {t_idx}: Tracked {num_warped_tips} tips, Mean EPE = {mean_epe:.6f}"
+                    f"Timepoint {t_idx}: Skipped EPE computation (all {num_tips_to_eval} tips at first appearance)"
                 )
 
             # Handle splits if provided
@@ -741,18 +775,34 @@ def track_tips_with_warper(
 
                 # Compute EPE for train tips
                 if train_tip_mask.sum() > 0:
-                    train_epe = epe_per_tip[train_tip_mask].mean()
-                    epe_values_train.append(train_epe)
-                    logging.info(f"[TIP_DEBUG] T{t_idx}: Train tip EPE = {train_epe:.6f}")
+                    train_epe_values = epe_per_tip[train_tip_mask]
+                    # Filter out NaN values (which correspond to tips at their first appearance)
+                    # These tips were excluded from EPE computation above (lines 703-709)
+                    train_epe_values = train_epe_values[~np.isnan(train_epe_values)]
+                    if len(train_epe_values) > 0:
+                        train_epe = train_epe_values.mean()
+                        epe_values_train.append(train_epe)
+                        logging.info(f"[TIP_DEBUG] T{t_idx}: Train tip EPE = {train_epe:.6f}")
+                    else:
+                        epe_values_train.append(None)
+                        logging.info(f"[TIP_DEBUG] T{t_idx}: Train tips at first appearance, appending None")
                 else:
                     epe_values_train.append(None)
                     logging.info(f"[TIP_DEBUG] T{t_idx}: No train tips, appending None")
 
                 # Compute EPE for test tips
                 if test_tip_mask.sum() > 0:
-                    test_epe = epe_per_tip[test_tip_mask].mean()
-                    epe_values_test.append(test_epe)
-                    logging.info(f"[TIP_DEBUG] T{t_idx}: Test tip EPE = {test_epe:.6f}")
+                    test_epe_values = epe_per_tip[test_tip_mask]
+                    # Filter out NaN values (which correspond to tips at their first appearance)
+                    # These tips were excluded from EPE computation above (lines 703-709)
+                    test_epe_values = test_epe_values[~np.isnan(test_epe_values)]
+                    if len(test_epe_values) > 0:
+                        test_epe = test_epe_values.mean()
+                        epe_values_test.append(test_epe)
+                        logging.info(f"[TIP_DEBUG] T{t_idx}: Test tip EPE = {test_epe:.6f}")
+                    else:
+                        epe_values_test.append(None)
+                        logging.info(f"[TIP_DEBUG] T{t_idx}: Test tips at first appearance, appending None")
                     # Store ALL tracked test tips for AccS/AccR (not just evaluated ones)
                     # This allows continuous flow computation even when GT is missing in some frames
                     warped_coords_test.append(warped_tip_coords)
