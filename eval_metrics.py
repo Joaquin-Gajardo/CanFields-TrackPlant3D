@@ -1243,99 +1243,84 @@ def compute_metrics_for_epoch(args, epoch_num):
 
         # Compute EPE for leaf tips using warper-based tracking
         if args.compute_tip_epe:
-            try:
-                # Load specs and dataset for warper
-                from datasets import data_pheno4d
+            # Load specs and dataset for warper
+            from datasets import data_pheno4d
 
-                specs_path = args.specifications
-                if not os.path.isabs(specs_path):
-                    specs_path = os.path.abspath(specs_path)
+            specs_path = args.specifications
+            if not os.path.isabs(specs_path):
+                specs_path = os.path.abspath(specs_path)
 
-                specs = json.load(open(specs_path))
+            specs = json.load(open(specs_path))
 
-                # Load dataset
-                split_file = args.point_split_file
-                if args.dataset_name == "pheno4d" and split_file is None:
-                    sequence_name = args.object_name.split("/")[-1]
-                    split_file = f"configs/point_splits/{sequence_name}_split.json"
+            # Load dataset
+            split_file = args.point_split_file
+            if args.dataset_name == "pheno4d" and split_file is None:
+                sequence_name = args.object_name.split("/")[-1]
+                split_file = f"configs/point_splits/{sequence_name}_split.json"
 
-                sdf_dataset = data_pheno4d.DeformSamples(
-                    args.object_name,
-                    start_idx=0,
-                    gap=None,
-                    train_step=1,
-                    use_dense=False,
-                    split_file=split_file,
-                    use_train_points=True,
+            sdf_dataset = data_pheno4d.DeformSamples(
+                args.object_name,
+                start_idx=0,
+                gap=None,
+                train_step=1,
+                use_dense=False,
+                split_file=split_file,
+                use_train_points=True,
+            )
+
+            # Load decoder model
+            decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
+
+            # Ensure gradient computation is disabled for tracking
+            decoder.warper.turoff_grad()
+            if hasattr(decoder.warper, 'clean_grads'):
+                decoder.warper.clean_grads()
+
+            # Track tips with warper
+            tip_epe_results = track_tips_with_warper(
+                decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits, original_indices
+            )
+
+            # Clean accumulated gradients after tracking
+            if hasattr(decoder.warper, 'clean_grads'):
+                decoder.warper.clean_grads()
+
+            # Add results to metrics_json
+            # Train tips
+            train_epe_values = [v for v in tip_epe_results["train"] if v is not None]
+            if len(train_epe_values) > 0:
+                train_epe_tensor = torch.tensor(train_epe_values)
+                metrics_json["train"]["num_timesteps_with_tips"] = len(train_epe_values)
+                metrics_json["train"]["mean_tip_epe"] = float(train_epe_tensor.mean().item())
+                metrics_json["train"]["std_tip_epe"] = float(train_epe_tensor.std().item())
+                metrics_json["train"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["train"] if v is not None]
+                logging.info(
+                    f"Train Set - Leaf Tip EPE (warper): {metrics_json['train']['mean_tip_epe']:.6f}"
                 )
-
-                # Load decoder model
-                decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
-
-                # Ensure gradient computation is disabled for tracking
-                decoder.warper.turoff_grad()
-                if hasattr(decoder.warper, 'clean_grads'):
-                    decoder.warper.clean_grads()
-
-                # Track tips with warper
-                tip_epe_results = track_tips_with_warper(
-                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits, original_indices
-                )
-
-                # Clean accumulated gradients after tracking
-                if hasattr(decoder.warper, 'clean_grads'):
-                    decoder.warper.clean_grads()
-
-                # Add results to metrics_json
-                # Train tips
-                train_epe_values = [v for v in tip_epe_results["train"] if v is not None]
-                if len(train_epe_values) > 0:
-                    train_epe_tensor = torch.tensor(train_epe_values)
-                    metrics_json["train"]["num_timesteps_with_tips"] = len(train_epe_values)
-                    metrics_json["train"]["mean_tip_epe"] = float(train_epe_tensor.mean().item())
-                    metrics_json["train"]["std_tip_epe"] = float(train_epe_tensor.std().item())
-                    metrics_json["train"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["train"] if v is not None]
-                    logging.info(
-                        f"Train Set - Leaf Tip EPE (warper): {metrics_json['train']['mean_tip_epe']:.6f}"
-                    )
-                else:
-                    metrics_json["train"]["num_timesteps_with_tips"] = 0
-                    metrics_json["train"]["mean_tip_epe"] = None
-                    metrics_json["train"]["std_tip_epe"] = None
-                    metrics_json["train"]["tip_epe_per_timestep"] = []
-                    logging.info("Train Set - No leaf tips found (expected if tips are in test set)")
-
-                # Test tips
-                test_epe_values = [v for v in tip_epe_results["test"] if v is not None]
-                if len(test_epe_values) > 0:
-                    test_epe_tensor = torch.tensor(test_epe_values)
-                    metrics_json["test"]["num_timesteps_with_tips"] = len(test_epe_values)
-                    metrics_json["test"]["mean_tip_epe"] = float(test_epe_tensor.mean().item())
-                    metrics_json["test"]["std_tip_epe"] = float(test_epe_tensor.std().item())
-                    metrics_json["test"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["test"] if v is not None]
-                    logging.info(
-                        f"Test Set - Leaf Tip EPE (warper): {metrics_json['test']['mean_tip_epe']:.6f}"
-                    )
-                else:
-                    metrics_json["test"]["num_timesteps_with_tips"] = 0
-                    metrics_json["test"]["mean_tip_epe"] = None
-                    metrics_json["test"]["std_tip_epe"] = None
-                    metrics_json["test"]["tip_epe_per_timestep"] = []
-                    logging.info("Test Set - No leaf tips found")
-
-            except Exception as e:
-                import traceback
-                logging.error(f"Error computing warper-based tip EPE: {e}")
-                logging.error(f"Traceback: {traceback.format_exc()}")
-                logging.warning("Skipping tip EPE computation")
+            else:
                 metrics_json["train"]["num_timesteps_with_tips"] = 0
                 metrics_json["train"]["mean_tip_epe"] = None
                 metrics_json["train"]["std_tip_epe"] = None
                 metrics_json["train"]["tip_epe_per_timestep"] = []
+                logging.info("Train Set - No leaf tips found (expected if tips are in test set)")
+
+            # Test tips
+            test_epe_values = [v for v in tip_epe_results["test"] if v is not None]
+            if len(test_epe_values) > 0:
+                test_epe_tensor = torch.tensor(test_epe_values)
+                metrics_json["test"]["num_timesteps_with_tips"] = len(test_epe_values)
+                metrics_json["test"]["mean_tip_epe"] = float(test_epe_tensor.mean().item())
+                metrics_json["test"]["std_tip_epe"] = float(test_epe_tensor.std().item())
+                metrics_json["test"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["test"] if v is not None]
+                logging.info(
+                    f"Test Set - Leaf Tip EPE (warper): {metrics_json['test']['mean_tip_epe']:.6f}"
+                )
+            else:
                 metrics_json["test"]["num_timesteps_with_tips"] = 0
                 metrics_json["test"]["mean_tip_epe"] = None
                 metrics_json["test"]["std_tip_epe"] = None
                 metrics_json["test"]["tip_epe_per_timestep"] = []
+                logging.info("Test Set - No leaf tips found")
 
         # Log results
         logging.info(
@@ -1408,85 +1393,74 @@ def compute_metrics_for_epoch(args, epoch_num):
 
         # Tip EPE using warper-based tracking
         if args.compute_tip_epe:
-            try:
-                # Load specs and dataset for warper
-                from datasets import data_pheno4d
+            # Load specs and dataset for warper
+            from datasets import data_pheno4d
 
-                specs_path = args.specifications
-                if not os.path.isabs(specs_path):
-                    specs_path = os.path.abspath(specs_path)
+            specs_path = args.specifications
+            if not os.path.isabs(specs_path):
+                specs_path = os.path.abspath(specs_path)
 
-                specs = json.load(open(specs_path))
+            specs = json.load(open(specs_path))
 
-                # Load dataset
-                split_file = args.point_split_file
-                if args.dataset_name == "pheno4d" and split_file is None:
-                    sequence_name = args.object_name.split("/")[-1]
-                    split_file = f"configs/point_splits/{sequence_name}_split.json"
-                    if not os.path.exists(split_file):
-                        split_file = None
+            # Load dataset
+            split_file = args.point_split_file
+            if args.dataset_name == "pheno4d" and split_file is None:
+                sequence_name = args.object_name.split("/")[-1]
+                split_file = f"configs/point_splits/{sequence_name}_split.json"
+                if not os.path.exists(split_file):
+                    split_file = None
 
-                # Extract interp_stride from experiment name (if present)
-                parts = args.experiment_name.split("_")
-                interp_stride_for_dataset = None
-                for i, part in enumerate(parts):
-                    if part == "stride" and i + 1 < len(parts):
-                        if i > 0 and parts[i - 1] == "interp":
-                            interp_stride_for_dataset = int(parts[i + 1])
+            # Extract interp_stride from experiment name (if present)
+            parts = args.experiment_name.split("_")
+            interp_stride_for_dataset = None
+            for i, part in enumerate(parts):
+                if part == "stride" and i + 1 < len(parts):
+                    if i > 0 and parts[i - 1] == "interp":
+                        interp_stride_for_dataset = int(parts[i + 1])
 
-                sdf_dataset = data_pheno4d.DeformSamples(
-                    args.object_name,
-                    start_idx=0,
-                    gap=None,
-                    train_step=1,
-                    use_dense=False,
-                    split_file=split_file,
-                    use_train_points=True,  # For dataset normalization, doesn't matter in interpolation mode
-                    interp_stride=interp_stride_for_dataset,
-                )
+            sdf_dataset = data_pheno4d.DeformSamples(
+                args.object_name,
+                start_idx=0,
+                gap=None,
+                train_step=1,
+                use_dense=False,
+                split_file=split_file,
+                use_train_points=True,  # For dataset normalization, doesn't matter in interpolation mode
+                interp_stride=interp_stride_for_dataset,
+            )
 
-                # Load decoder model
-                decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
+            # Load decoder model
+            decoder, scale, mean, normalized_times = load_decoder_model(args, specs, sdf_dataset, epoch_num)
 
-                # Ensure gradient computation is disabled for tracking
-                decoder.warper.turoff_grad()
-                if hasattr(decoder.warper, 'clean_grads'):
-                    decoder.warper.clean_grads()
+            # Ensure gradient computation is disabled for tracking
+            decoder.warper.turoff_grad()
+            if hasattr(decoder.warper, 'clean_grads'):
+                decoder.warper.clean_grads()
 
-                # Track tips with warper (no splits)
-                tip_epe_results = track_tips_with_warper(
-                    decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits=None, original_indices=original_indices
-                )
+            # Track tips with warper (no splits)
+            tip_epe_results = track_tips_with_warper(
+                decoder, gt_paths, sdf_dataset, scale, mean, normalized_times, point_splits=None, original_indices=original_indices
+            )
 
-                # Clean accumulated gradients after tracking
-                if hasattr(decoder.warper, 'clean_grads'):
-                    decoder.warper.clean_grads()
+            # Clean accumulated gradients after tracking
+            if hasattr(decoder.warper, 'clean_grads'):
+                decoder.warper.clean_grads()
 
-                # Add results to metrics_json
-                epe_values = [v for v in tip_epe_results["all"] if v is not None]
-                if len(epe_values) > 0:
-                    epe_tensor = torch.tensor(epe_values)
-                    metrics_json["num_timesteps_with_tips"] = len(epe_values)
-                    metrics_json["mean_tip_epe"] = float(epe_tensor.mean().item())
-                    metrics_json["std_tip_epe"] = float(epe_tensor.std().item())
-                    metrics_json["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["all"] if v is not None]
-                    logging.info(f"Leaf Tip EPE (warper): {metrics_json['mean_tip_epe']:.6f}")
-                else:
-                    metrics_json["num_timesteps_with_tips"] = 0
-                    metrics_json["mean_tip_epe"] = None
-                    metrics_json["std_tip_epe"] = None
-                    metrics_json["tip_epe_per_timestep"] = []
-                    logging.info("No leaf tips found in any timestep")
-
-            except Exception as e:
-                import traceback
-                logging.error(f"Error computing warper-based tip EPE: {e}")
-                logging.error(f"Traceback: {traceback.format_exc()}")
-                logging.warning("Skipping tip EPE computation")
+            # Add results to metrics_json
+            epe_values = [v for v in tip_epe_results["all"] if v is not None]
+            if len(epe_values) > 0:
+                epe_tensor = torch.tensor(epe_values)
+                metrics_json["num_timesteps_with_tips"] = len(epe_values)
+                metrics_json["mean_tip_epe"] = float(epe_tensor.mean().item())
+                metrics_json["std_tip_epe"] = float(epe_tensor.std().item())
+                metrics_json["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["all"] if v is not None]
+                logging.info(f"Leaf Tip EPE (warper): {metrics_json['mean_tip_epe']:.6f}")
+            else:
                 metrics_json["num_timesteps_with_tips"] = 0
                 metrics_json["mean_tip_epe"] = None
                 metrics_json["std_tip_epe"] = None
                 metrics_json["tip_epe_per_timestep"] = []
+                logging.info("No leaf tips found in any timestep")
 
         # Log results
         logging.info(
