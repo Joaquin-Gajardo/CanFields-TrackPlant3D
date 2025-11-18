@@ -22,6 +22,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import open3d as o3d
@@ -174,11 +175,15 @@ def load_leaf_tips_from_ply(ply_path: str) -> tuple:
             is_leaf_tip = pcd.point.is_leaf_tip.numpy().flatten().astype(bool)
             leaf_tip_idxs = np.where(is_leaf_tip)[0]
             leaf_tip_coords = points[leaf_tip_idxs]
+            logging.info(f"[TIP_DEBUG] Loaded {len(leaf_tip_idxs)} tips from {Path(ply_path).name}, indices: {leaf_tip_idxs.tolist()}")
             return leaf_tip_idxs, leaf_tip_coords
         else:
+            logging.info(f"[TIP_DEBUG] No is_leaf_tip attribute in {Path(ply_path).name}")
             return np.array([]), np.array([])
     except Exception as e:
-        logging.warning(f"Could not load leaf tips from {ply_path}: {e}")
+        logging.warning(f"[TIP_DEBUG] Exception loading tips from {ply_path}: {e}")
+        import traceback
+        logging.warning(f"[TIP_DEBUG] Traceback: {traceback.format_exc()}")
         return np.array([]), np.array([])
 
 
@@ -599,18 +604,23 @@ def track_tips_with_warper(
 
     # Load all GT tips first to identify unique tips
     all_gt_tips = []
+    logging.info(f"[TIP_DEBUG] Loading tips from {len(gt_paths)} timesteps for tip tracking...")
     for t_idx, gt_path in enumerate(gt_paths):
         _, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
         all_gt_tips.append(gt_tip_coords)
+        logging.info(f"[TIP_DEBUG] T{t_idx}: Loaded {len(gt_tip_coords)} tips from GT")
 
         # Initialize tracking for tips appearing at this timepoint
         if len(gt_tip_coords) > len(tracked_tips):
             num_new_tips = len(gt_tip_coords) - len(tracked_tips)
+            logging.info(f"[TIP_DEBUG] T{t_idx}: Initializing {num_new_tips} new tips (total tracked: {len(tracked_tips)})")
             for i in range(num_new_tips):
                 new_tip_id = len(tracked_tips)
                 new_tip_coord = gt_tip_coords[new_tip_id]
                 tracked_tips[new_tip_id] = (t_idx, new_tip_coord, normalized_times[t_idx])
-                logging.info(f"Initialized tip {new_tip_id} appearing at timepoint {t_idx}")
+                logging.info(f"[TIP_DEBUG] Initialized tip {new_tip_id} appearing at timepoint {t_idx}, coord: {new_tip_coord}")
+        else:
+            logging.info(f"[TIP_DEBUG] T{t_idx}: No new tips to initialize (GT has {len(gt_tip_coords)}, already tracking {len(tracked_tips)})")
 
     # Now track tips through time
     epe_values_all = []
@@ -720,28 +730,36 @@ def track_tips_with_warper(
 
                 # Load tip indices from GT
                 gt_tip_indices_in_full_cloud, _ = load_leaf_tips_from_ply(gt_path)
+                logging.info(f"[TIP_DEBUG] T{t_idx}: GT tip indices in full cloud: {gt_tip_indices_in_full_cloud.tolist()}")
+                logging.info(f"[TIP_DEBUG] T{t_idx}: Train has {len(train_indices)} pts, Test has {len(test_indices)} pts")
 
                 # Separate tips into train and test (only for tips we evaluated)
                 train_tip_mask = np.isin(gt_tip_indices_in_full_cloud[:num_tips_to_eval], train_indices)
                 test_tip_mask = np.isin(gt_tip_indices_in_full_cloud[:num_tips_to_eval], test_indices)
 
+                logging.info(f"[TIP_DEBUG] T{t_idx}: Tips in train: {train_tip_mask.sum()}/{num_tips_to_eval}, in test: {test_tip_mask.sum()}/{num_tips_to_eval}")
+
                 # Compute EPE for train tips
                 if train_tip_mask.sum() > 0:
                     train_epe = epe_per_tip[train_tip_mask].mean()
                     epe_values_train.append(train_epe)
+                    logging.info(f"[TIP_DEBUG] T{t_idx}: Train tip EPE = {train_epe:.6f}")
                 else:
                     epe_values_train.append(None)
+                    logging.info(f"[TIP_DEBUG] T{t_idx}: No train tips, appending None")
 
                 # Compute EPE for test tips
                 if test_tip_mask.sum() > 0:
                     test_epe = epe_per_tip[test_tip_mask].mean()
                     epe_values_test.append(test_epe)
+                    logging.info(f"[TIP_DEBUG] T{t_idx}: Test tip EPE = {test_epe:.6f}")
                     # Store ALL tracked test tips for AccS/AccR (not just evaluated ones)
                     # This allows continuous flow computation even when GT is missing in some frames
                     warped_coords_test.append(warped_tip_coords)
                     gt_coords_test.append(gt_tip_coords)
                 else:
                     epe_values_test.append(None)
+                    logging.info(f"[TIP_DEBUG] T{t_idx}: No test tips, appending None")
                     # Still store warped coords for continuous tracking, but no GT
                     warped_coords_test.append(warped_tip_coords)
                     gt_coords_test.append(None)
@@ -769,6 +787,14 @@ def track_tips_with_warper(
         result["test"] = epe_values_test
         result["warped_coords_test"] = warped_coords_test
         result["gt_coords_test"] = gt_coords_test
+
+        # Summary logging
+        train_valid = sum(1 for v in epe_values_train if v is not None)
+        test_valid = sum(1 for v in epe_values_test if v is not None)
+        logging.info(f"[TIP_DEBUG] === TIP TRACKING SUMMARY ===")
+        logging.info(f"[TIP_DEBUG] Total unique tips tracked: {len(tracked_tips)}")
+        logging.info(f"[TIP_DEBUG] Timesteps with valid TRAIN tip EPE: {train_valid}/{len(epe_values_train)}")
+        logging.info(f"[TIP_DEBUG] Timesteps with valid TEST tip EPE: {test_valid}/{len(epe_values_test)}")
 
     return result
 
@@ -1268,7 +1294,7 @@ def compute_metrics_for_epoch(args, epoch_num):
                     metrics_json["train"]["num_timesteps_with_tips"] = len(train_epe_values)
                     metrics_json["train"]["mean_tip_epe"] = float(train_epe_tensor.mean().item())
                     metrics_json["train"]["std_tip_epe"] = float(train_epe_tensor.std().item())
-                    metrics_json["train"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["train"]]
+                    metrics_json["train"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["train"] if v is not None]
                     logging.info(
                         f"Train Set - Leaf Tip EPE (warper): {metrics_json['train']['mean_tip_epe']:.6f}"
                     )
@@ -1286,7 +1312,7 @@ def compute_metrics_for_epoch(args, epoch_num):
                     metrics_json["test"]["num_timesteps_with_tips"] = len(test_epe_values)
                     metrics_json["test"]["mean_tip_epe"] = float(test_epe_tensor.mean().item())
                     metrics_json["test"]["std_tip_epe"] = float(test_epe_tensor.std().item())
-                    metrics_json["test"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["test"]]
+                    metrics_json["test"]["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["test"] if v is not None]
                     logging.info(
                         f"Test Set - Leaf Tip EPE (warper): {metrics_json['test']['mean_tip_epe']:.6f}"
                     )
@@ -1443,7 +1469,7 @@ def compute_metrics_for_epoch(args, epoch_num):
                     metrics_json["num_timesteps_with_tips"] = len(epe_values)
                     metrics_json["mean_tip_epe"] = float(epe_tensor.mean().item())
                     metrics_json["std_tip_epe"] = float(epe_tensor.std().item())
-                    metrics_json["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["all"]]
+                    metrics_json["tip_epe_per_timestep"] = [float(v) for v in tip_epe_results["all"] if v is not None]
                     logging.info(f"Leaf Tip EPE (warper): {metrics_json['mean_tip_epe']:.6f}")
                 else:
                     metrics_json["num_timesteps_with_tips"] = 0
