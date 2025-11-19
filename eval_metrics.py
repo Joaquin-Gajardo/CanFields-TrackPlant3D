@@ -1531,7 +1531,7 @@ def compute_metrics_for_epoch(args, epoch_num):
 
     # Compute scene flow metrics (AccS, AccR, EPE3D) on leaf tips using warped coordinates
     # This uses the same warped tip tracking that we use for EPE computation
-    logging.info("Computing scene flow metrics (AccS, AccR, EPE3D) on tracked leaf tips...")
+    logging.info("Computing accuracy metrics (AccS, AccR) on tracked leaf tips...")
 
     try:
         if point_splits:
@@ -1542,58 +1542,64 @@ def compute_metrics_for_epoch(args, epoch_num):
 
                 test_accs_values = []
                 test_accr_values = []
-                test_epe3d_values = []
 
-                # Compute flow between consecutive frames
-                for i in range(len(warped_coords_test) - 1):
-                    if warped_coords_test[i] is None or warped_coords_test[i+1] is None:
-                        continue
-                    if gt_coords_test[i] is None or gt_coords_test[i+1] is None:
+                # Compute position-based accuracy at each timestep
+                # Skip first appearance (same logic as EPE computation)
+                for i in range(len(warped_coords_test)):
+                    if warped_coords_test[i] is None or gt_coords_test[i] is None:
                         continue
 
-                    # Flow = position at t+1 minus position at t
-                    # Match tips across frames - use minimum of:
-                    # 1. Number of warped tips at both frames (for pred flow)
-                    # 2. Number of GT tips at both frames (for GT flow)
-                    num_warped_tips = min(len(warped_coords_test[i]), len(warped_coords_test[i+1]))
-                    num_gt_tips = min(len(gt_coords_test[i]), len(gt_coords_test[i+1]))
-
-                    # We can only compute flow for tips that have GT in both frames
+                    num_warped_tips = len(warped_coords_test[i])
+                    num_gt_tips = len(gt_coords_test[i])
                     num_tips_to_eval = min(num_warped_tips, num_gt_tips)
 
                     if num_tips_to_eval == 0:
                         continue
 
-                    pred_flow = warped_coords_test[i+1][:num_tips_to_eval] - warped_coords_test[i][:num_tips_to_eval]
-                    gt_flow = gt_coords_test[i+1][:num_tips_to_eval] - gt_coords_test[i][:num_tips_to_eval]
+                    # Skip first appearance (consistent with EPE computation)
+                    # Check if any tips at this timestep are at their first appearance
+                    # We need to access tracked_tips from tip tracking, but we don't have it here
+                    # Instead, we'll skip timestep 0 if it contains tips (simpler approach)
+                    # This works because tips appear sequentially and the first tip appears at t=0
+                    if i == 0:
+                        # Check if this is the first timestep with tips
+                        has_earlier_tips = False
+                        for j in range(i):
+                            if warped_coords_test[j] is not None and gt_coords_test[j] is not None:
+                                if len(warped_coords_test[j]) > 0 and len(gt_coords_test[j]) > 0:
+                                    has_earlier_tips = True
+                                    break
+                        if not has_earlier_tips:
+                            # This is first appearance, skip it
+                            continue
 
-                    # Convert to tensors for scene_flow_metrics
-                    pred_flow_tensor = torch.from_numpy(pred_flow).float()
-                    gt_flow_tensor = torch.from_numpy(gt_flow).float()
+                    # Compute position errors (same as EPE)
+                    warped_pos = warped_coords_test[i][:num_tips_to_eval]
+                    gt_pos = gt_coords_test[i][:num_tips_to_eval]
 
-                    epe3d, accs, accr = scene_flow_metrics(pred_flow_tensor, gt_flow_tensor)
-                    test_epe3d_values.append(epe3d)
+                    # Convert to tensors
+                    warped_tensor = torch.from_numpy(warped_pos).float()
+                    gt_tensor = torch.from_numpy(gt_pos).float()
+
+                    # Compute AccS and AccR using position errors (not flow)
+                    # Note: EPE3D from scene_flow_metrics is redundant with mean_tip_epe, so we ignore it
+                    _, accs, accr = scene_flow_metrics(warped_tensor, gt_tensor)
                     test_accs_values.append(accs)
                     test_accr_values.append(accr)
 
                 if len(test_accs_values) > 0:
                     metrics_json["test"]["mean_AccS"] = float(np.mean(test_accs_values))
                     metrics_json["test"]["std_AccS"] = float(np.std(test_accs_values))
-                    metrics_json["test"]["AccS_per_transition"] = [float(v) for v in test_accs_values]
+                    metrics_json["test"]["AccS_per_timestep"] = [float(v) for v in test_accs_values]
 
                     metrics_json["test"]["mean_AccR"] = float(np.mean(test_accr_values))
                     metrics_json["test"]["std_AccR"] = float(np.std(test_accr_values))
-                    metrics_json["test"]["AccR_per_transition"] = [float(v) for v in test_accr_values]
-
-                    metrics_json["test"]["mean_EPE3D_flow"] = float(np.mean(test_epe3d_values))
-                    metrics_json["test"]["std_EPE3D_flow"] = float(np.std(test_epe3d_values))
-                    metrics_json["test"]["EPE3D_per_transition"] = [float(v) for v in test_epe3d_values]
+                    metrics_json["test"]["AccR_per_timestep"] = [float(v) for v in test_accr_values]
 
                     logging.info(f"Test Set - Mean AccS (leaf tips): {metrics_json['test']['mean_AccS']:.2f}%")
                     logging.info(f"Test Set - Mean AccR (leaf tips): {metrics_json['test']['mean_AccR']:.2f}%")
-                    logging.info(f"Test Set - Mean EPE3D (leaf tip flow): {metrics_json['test']['mean_EPE3D_flow']:.6f}")
                 else:
-                    logging.warning("No valid tip flow transitions for AccS/AccR computation")
+                    logging.warning("No valid timesteps for AccS/AccR computation")
             else:
                 logging.warning("Warped tip coordinates not available, skipping AccS/AccR on tips")
         else:
@@ -1604,51 +1610,60 @@ def compute_metrics_for_epoch(args, epoch_num):
 
                 accs_values = []
                 accr_values = []
-                epe3d_values = []
 
-                for i in range(len(warped_coords_all) - 1):
-                    if warped_coords_all[i] is None or warped_coords_all[i+1] is None:
-                        continue
-                    if gt_coords_all[i] is None or gt_coords_all[i+1] is None:
+                # Compute position-based accuracy at each timestep
+                # Skip first appearance (same logic as EPE computation)
+                for i in range(len(warped_coords_all)):
+                    if warped_coords_all[i] is None or gt_coords_all[i] is None:
                         continue
 
-                    # Match tips across frames - handle variable GT tip counts
-                    num_warped_tips = min(len(warped_coords_all[i]), len(warped_coords_all[i+1]))
-                    num_gt_tips = min(len(gt_coords_all[i]), len(gt_coords_all[i+1]))
+                    num_warped_tips = len(warped_coords_all[i])
+                    num_gt_tips = len(gt_coords_all[i])
                     num_tips_to_eval = min(num_warped_tips, num_gt_tips)
 
                     if num_tips_to_eval == 0:
                         continue
 
-                    pred_flow = warped_coords_all[i+1][:num_tips_to_eval] - warped_coords_all[i][:num_tips_to_eval]
-                    gt_flow = gt_coords_all[i+1][:num_tips_to_eval] - gt_coords_all[i][:num_tips_to_eval]
+                    # Skip first appearance (consistent with EPE computation)
+                    if i == 0:
+                        # Check if this is the first timestep with tips
+                        has_earlier_tips = False
+                        for j in range(i):
+                            if warped_coords_all[j] is not None and gt_coords_all[j] is not None:
+                                if len(warped_coords_all[j]) > 0 and len(gt_coords_all[j]) > 0:
+                                    has_earlier_tips = True
+                                    break
+                        if not has_earlier_tips:
+                            # This is first appearance, skip it
+                            continue
 
-                    pred_flow_tensor = torch.from_numpy(pred_flow).float()
-                    gt_flow_tensor = torch.from_numpy(gt_flow).float()
+                    # Compute position errors (same as EPE)
+                    warped_pos = warped_coords_all[i][:num_tips_to_eval]
+                    gt_pos = gt_coords_all[i][:num_tips_to_eval]
 
-                    epe3d, accs, accr = scene_flow_metrics(pred_flow_tensor, gt_flow_tensor)
-                    epe3d_values.append(epe3d)
+                    # Convert to tensors
+                    warped_tensor = torch.from_numpy(warped_pos).float()
+                    gt_tensor = torch.from_numpy(gt_pos).float()
+
+                    # Compute AccS and AccR using position errors (not flow)
+                    # Note: EPE3D from scene_flow_metrics is redundant with mean_tip_epe, so we ignore it
+                    _, accs, accr = scene_flow_metrics(warped_tensor, gt_tensor)
                     accs_values.append(accs)
                     accr_values.append(accr)
 
                 if len(accs_values) > 0:
                     metrics_json["mean_AccS"] = float(np.mean(accs_values))
                     metrics_json["std_AccS"] = float(np.std(accs_values))
-                    metrics_json["AccS_per_transition"] = [float(v) for v in accs_values]
+                    metrics_json["AccS_per_timestep"] = [float(v) for v in accs_values]
 
                     metrics_json["mean_AccR"] = float(np.mean(accr_values))
                     metrics_json["std_AccR"] = float(np.std(accr_values))
-                    metrics_json["AccR_per_transition"] = [float(v) for v in accr_values]
-
-                    metrics_json["mean_EPE3D_flow"] = float(np.mean(epe3d_values))
-                    metrics_json["std_EPE3D_flow"] = float(np.std(epe3d_values))
-                    metrics_json["EPE3D_per_transition"] = [float(v) for v in epe3d_values]
+                    metrics_json["AccR_per_timestep"] = [float(v) for v in accr_values]
 
                     logging.info(f"Mean AccS (leaf tips): {metrics_json['mean_AccS']:.2f}%")
                     logging.info(f"Mean AccR (leaf tips): {metrics_json['mean_AccR']:.2f}%")
-                    logging.info(f"Mean EPE3D (leaf tip flow): {metrics_json['mean_EPE3D_flow']:.6f}")
                 else:
-                    logging.warning("No valid tip flow transitions for AccS/AccR computation")
+                    logging.warning("No valid timesteps for AccS/AccR computation")
             else:
                 logging.warning("Warped tip coordinates not available, skipping AccS/AccR on tips")
     except Exception as e:
