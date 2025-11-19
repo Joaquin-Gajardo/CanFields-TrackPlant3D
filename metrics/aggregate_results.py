@@ -57,6 +57,57 @@ def deduplicate_to_latest_experiments(results):
     return deduplicated
 
 
+def find_best_available_epoch(metrics_dir, requested_epoch, metric_type="eval"):
+    """
+    Find the best available epoch file, falling back to earlier epochs if needed.
+
+    Args:
+        metrics_dir: Directory containing metrics files
+        requested_epoch: Requested epoch number
+        metric_type: "eval" or "training"
+
+    Returns:
+        Tuple of (metrics_file_path, actual_epoch) or (None, None) if not found
+    """
+    if metric_type == "eval":
+        pattern = "metrics_epoch_*.json"
+    else:
+        pattern = "training_metrics_epoch_*.json"
+
+    # Find all epoch files in this directory
+    epoch_files = list(Path(metrics_dir).glob(pattern))
+    if not epoch_files:
+        return None, None
+
+    # Extract epoch numbers from filenames
+    available_epochs = []
+    for f in epoch_files:
+        try:
+            epoch_num = int(f.stem.split('_')[-1])
+            available_epochs.append((epoch_num, f))
+        except ValueError:
+            continue
+
+    if not available_epochs:
+        return None, None
+
+    # Sort by epoch number descending
+    available_epochs.sort(reverse=True)
+
+    # Try to find exact match first
+    for epoch_num, filepath in available_epochs:
+        if epoch_num == requested_epoch:
+            return filepath, epoch_num
+
+    # Fall back to closest earlier epoch
+    for epoch_num, filepath in available_epochs:
+        if epoch_num < requested_epoch:
+            return filepath, epoch_num
+
+    # If no earlier epoch, use the latest available
+    return available_epochs[0][1], available_epochs[0][0]
+
+
 def collect_metrics_from_experiments(
     base_dir="results/pheno4d",
     epoch=None,
@@ -81,23 +132,43 @@ def collect_metrics_from_experiments(
     results = []
     base_path = Path(base_dir)
 
-    # Pattern for metrics files
-    if metric_type == "eval":
-        if epoch:
-            pattern = f"metrics_epoch_{epoch}.json"
-        else:
+    # If epoch is requested, we'll search for all experiments and find best epoch for each
+    if epoch:
+        # Find all experiment directories (contains metrics subdirectory)
+        experiment_dirs = []
+        for method_dir in base_path.iterdir():
+            if not method_dir.is_dir() or method_dir.name == "wandb":
+                continue
+            for crop_dir in method_dir.iterdir():
+                if not crop_dir.is_dir():
+                    continue
+                for sequence_dir in crop_dir.iterdir():
+                    if not sequence_dir.is_dir():
+                        continue
+                    for experiment_dir in sequence_dir.iterdir():
+                        if not experiment_dir.is_dir():
+                            continue
+                        metrics_dir = experiment_dir / "metrics"
+                        if metrics_dir.exists():
+                            experiment_dirs.append((experiment_dir, metrics_dir))
+
+        metrics_files = []
+        for experiment_dir, metrics_dir in experiment_dirs:
+            best_file, actual_epoch = find_best_available_epoch(metrics_dir, epoch, metric_type)
+            if best_file:
+                metrics_files.append(best_file)
+    else:
+        # Original behavior for summary files
+        if metric_type == "eval":
             pattern = "metrics_summary.json"
-    else:  # training
-        if epoch:
-            pattern = f"training_metrics_epoch_{epoch}.json"
         else:
             pattern = "training_metrics_epoch_*.json"
 
-    # Find all metrics files
-    metrics_files = list(base_path.rglob(pattern))
+        # Find all metrics files
+        metrics_files = list(base_path.rglob(pattern))
 
     if not metrics_files:
-        print(f"\n⚠️  No metrics files found matching pattern: {pattern}")
+        print(f"\n⚠️  No metrics files found for epoch {epoch}")
         print(f"\nPossible solutions:")
         if not epoch and metric_type == "eval":
             print(
@@ -136,6 +207,13 @@ def collect_metrics_from_experiments(
                 sequence = "unknown"
                 experiment_name = metrics_file.parent.parent.name
 
+            # Extract timestamp from experiment name (format: YYYYMMDD_HHMMSS_...)
+            name_parts = experiment_name.split('_')
+            if len(name_parts) >= 2 and len(name_parts[0]) == 8 and len(name_parts[1]) == 6:
+                experiment_timestamp = f"{name_parts[0]}_{name_parts[1]}"
+            else:
+                experiment_timestamp = None
+
             # Apply experiment type filter
             is_interp = "_interp_stride_" in experiment_name
 
@@ -154,6 +232,7 @@ def collect_metrics_from_experiments(
                     "sequence": sequence,
                     "num_epochs": data.get("num_epochs_evaluated", 0),
                     "best_epoch": data.get("best_epoch_by_chamfer", None),
+                    "experiment_timestamp": experiment_timestamp,
                     "metrics_file": str(metrics_file),
                 }
                 results.append(result)
@@ -184,7 +263,8 @@ def collect_metrics_from_experiments(
                             "num_timesteps": data["train"].get("num_timesteps", None),
                             "storage_mb": data.get("storage_mb", None),
                             "runtime_minutes": data.get("runtime_minutes", None),
-                            "timestamp": data.get("timestamp", None),
+                            "metrics_timestamp": data.get("timestamp", None),
+                            "experiment_timestamp": experiment_timestamp,
                             "metrics_file": str(metrics_file),
                         }
                         results.append(result_train)
@@ -210,7 +290,8 @@ def collect_metrics_from_experiments(
                             "num_timesteps": data["test"].get("num_timesteps", None),
                             "storage_mb": data.get("storage_mb", None),
                             "runtime_minutes": data.get("runtime_minutes", None),
-                            "timestamp": data.get("timestamp", None),
+                            "metrics_timestamp": data.get("timestamp", None),
+                            "experiment_timestamp": experiment_timestamp,
                             "metrics_file": str(metrics_file),
                         }
                         results.append(result_test)
@@ -232,7 +313,8 @@ def collect_metrics_from_experiments(
                         "num_timesteps": data.get("num_timesteps", None),
                         "storage_mb": data.get("storage_mb", None),
                         "runtime_minutes": data.get("runtime_minutes", None),
-                        "timestamp": data.get("timestamp", None),
+                        "metrics_timestamp": data.get("timestamp", None),
+                        "experiment_timestamp": experiment_timestamp,
                         "metrics_file": str(metrics_file),
                     }
                     results.append(result)
