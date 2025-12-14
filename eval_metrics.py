@@ -164,13 +164,14 @@ def load_mesh_as_points(
 
 def load_leaf_tips_from_ply(ply_path: str) -> tuple:
     """
-    Load leaf tip indices and coordinates from a PLY file.
+    Load leaf tip indices, coordinates, and organ labels from a PLY file.
 
     Args:
-        ply_path: Path to PLY file with is_leaf_tip scalar field
+        ply_path: Path to PLY file with is_leaf_tip and organ_label scalar fields
 
     Returns:
-        Tuple of (leaf_tip_indices, leaf_tip_coordinates)
+        Tuple of (leaf_tip_indices, leaf_tip_coordinates, leaf_tip_organ_labels)
+        If organ labels not available, third element is None
     """
     try:
         # Load with Open3D tensor to access scalar fields
@@ -182,13 +183,20 @@ def load_leaf_tips_from_ply(ply_path: str) -> tuple:
             is_leaf_tip = pcd.point.is_leaf_tip.numpy().flatten().astype(bool)
             leaf_tip_idxs = np.where(is_leaf_tip)[0]
             leaf_tip_coords = points[leaf_tip_idxs]
-            return leaf_tip_idxs, leaf_tip_coords
+
+            # Load organ labels if available
+            leaf_tip_organ_labels = None
+            if "organ_label" in pcd.point:
+                organ_label = pcd.point.organ_label.numpy().flatten()
+                leaf_tip_organ_labels = organ_label[leaf_tip_idxs]
+
+            return leaf_tip_idxs, leaf_tip_coords, leaf_tip_organ_labels
         else:
             logging.info(f"No is_leaf_tip attribute in {Path(ply_path).name}")
-            return np.array([]), np.array([])
+            return np.array([]), np.array([]), None
     except Exception as e:
         logging.warning(f"Exception loading tips from {ply_path}: {e}")
-        return np.array([]), np.array([])
+        return np.array([]), np.array([]), None
 
 
 def load_point_splits(split_file: str) -> dict:
@@ -603,27 +611,51 @@ def track_tips_with_warper(
     if original_indices is None:
         original_indices = list(range(len(gt_paths)))
 
-    # Dictionary to track tips: {tip_id: (first_appear_idx, first_appear_coords, first_appear_time)}
+    # Dictionary to track tips: {organ_id: (first_appear_idx, first_appear_coords, first_appear_time)}
+    # Uses organ IDs for robust matching across timepoints
     tracked_tips = {}
 
     # Load all GT tips first to identify unique tips
-    all_gt_tips = []
+    all_gt_tips = []  # List of (coords, organ_labels) tuples
+    organ_id_available = None  # Will be set on first file
+
     logging.info(f"Loading tips from {len(gt_paths)} timesteps for tip tracking...")
     for t_idx, gt_path in enumerate(gt_paths):
-        _, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
-        all_gt_tips.append(gt_tip_coords)
+        _, gt_tip_coords, gt_tip_organ_labels = load_leaf_tips_from_ply(gt_path)
+
+        # Check organ ID availability on first file
+        if t_idx == 0:
+            organ_id_available = (gt_tip_organ_labels is not None)
+            if organ_id_available:
+                logging.info("✓ Organ labels found - using organ ID based tip matching")
+            else:
+                logging.warning("✗ No organ labels found - using positional matching (less robust)")
+
+        all_gt_tips.append((gt_tip_coords, gt_tip_organ_labels))
 
         # Initialize tracking for tips appearing at this timepoint
-        if len(gt_tip_coords) > len(tracked_tips):
-            num_new_tips = len(gt_tip_coords) - len(tracked_tips)
-            for i in range(num_new_tips):
-                new_tip_id = len(tracked_tips)
-                new_tip_coord = gt_tip_coords[new_tip_id]
-                tracked_tips[new_tip_id] = (
-                    t_idx,
-                    new_tip_coord,
-                    normalized_times[t_idx],
-                )
+        if organ_id_available and gt_tip_organ_labels is not None:
+            # Track tips by organ ID
+            for tip_coord, organ_id in zip(gt_tip_coords, gt_tip_organ_labels):
+                if organ_id not in tracked_tips:
+                    # New tip appearing
+                    tracked_tips[organ_id] = (
+                        t_idx,
+                        tip_coord,
+                        normalized_times[t_idx],
+                    )
+        else:
+            # Fallback to positional tracking (old behavior)
+            if len(gt_tip_coords) > len(tracked_tips):
+                num_new_tips = len(gt_tip_coords) - len(tracked_tips)
+                for i in range(num_new_tips):
+                    new_tip_id = len(tracked_tips)
+                    new_tip_coord = gt_tip_coords[new_tip_id]
+                    tracked_tips[new_tip_id] = (
+                        t_idx,
+                        new_tip_coord,
+                        normalized_times[t_idx],
+                    )
 
     # Now track tips through time
     epe_values_all = []
@@ -643,7 +675,7 @@ def track_tips_with_warper(
 
     for t_idx, gt_path in enumerate(gt_paths):
         target_time = normalized_times[t_idx]
-        gt_tip_coords = all_gt_tips[t_idx]
+        gt_tip_coords, gt_tip_organ_labels = all_gt_tips[t_idx]
 
         if len(gt_tip_coords) == 0:
             logging.info(f"Timepoint {t_idx}: No GT tips found, skipping")
@@ -706,55 +738,110 @@ def track_tips_with_warper(
         num_gt_tips = len(gt_tip_coords)
         num_warped_tips = len(warped_tip_coords)
 
-        # Match warped tips to GT tips (use first N tips that have been initialized)
-        # Assumption: tips are initialized in order and GT tips are in the same order
-        num_tips_to_eval = min(num_warped_tips, num_gt_tips)
+        # Match warped tips to GT tips by organ ID (if available) or position (fallback)
+        if organ_id_available and gt_tip_organ_labels is not None:
+            # === ORGAN ID BASED MATCHING (robust to appearance/disappearance) ===
+            # Build list of organ IDs that were actually warped (same order as warped_tip_coords)
+            warped_organ_ids = []
+            for tip_id in sorted(tracked_tips.keys()):
+                first_appear_idx, _, _ = tracked_tips[tip_id]
+                if t_idx >= first_appear_idx:
+                    # This tip has appeared, so it's in warped_tip_coords
+                    warped_organ_ids.append(tip_id)
 
-        if num_tips_to_eval > 0:
-            # Compute EPE only for tips that have GT at this frame
-            warped_to_eval = warped_tip_coords[:num_tips_to_eval]
-            gt_to_eval = gt_tip_coords[:num_tips_to_eval]
+            # Build mapping: organ_id -> warped_coords
+            warped_by_organ = {
+                organ_id: warped_tip_coords[idx]
+                for idx, organ_id in enumerate(warped_organ_ids)
+            }
 
-            # Check if this is the first appearance for any tip
-            # Skip EPE computation for tips at their first appearance (like we skip first frame for CD/NC)
-            tips_to_include = []
-            for tip_id in range(num_tips_to_eval):
-                if tip_id in tracked_tips:
-                    first_appear_idx, _, _ = tracked_tips[tip_id]
-                    if t_idx != first_appear_idx:
-                        # Not the first appearance, include this tip
-                        tips_to_include.append(tip_id)
+            # Find common organ IDs between tracked tips and current GT
+            common_organ_ids = set(warped_by_organ.keys()) & set(gt_tip_organ_labels)
 
-            if len(tips_to_include) > 0:
-                # Compute EPE only for tips not at their first appearance
-                tips_to_include = np.array(tips_to_include)
-                epe_per_tip_filtered = np.linalg.norm(
-                    warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
-                    axis=1,
-                )
-                mean_epe = epe_per_tip_filtered.mean()
+            # Build matched arrays
+            warped_to_eval = []
+            gt_to_eval = []
+            tips_to_include = []  # Indices in warped_to_eval/gt_to_eval arrays
 
-                # For split computation, we need EPE per tip (including None for skipped tips)
-                epe_per_tip = np.full(num_tips_to_eval, np.nan)
-                epe_per_tip[tips_to_include] = np.linalg.norm(
-                    warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
-                    axis=1,
-                )
+            for organ_id in sorted(common_organ_ids):
+                first_appear_idx, _, _ = tracked_tips[organ_id]
 
-                # Track how many tips were evaluated (excluding first appearance)
-                n_tips_evaluated_all.append(len(tips_to_include))
+                # Find GT tip with this organ_id
+                gt_idx = np.where(gt_tip_organ_labels == organ_id)[0]
+                if len(gt_idx) == 0:
+                    continue
+
+                warped_to_eval.append(warped_by_organ[organ_id])
+                gt_to_eval.append(gt_tip_coords[gt_idx[0]])
+
+                # Skip if first appearance
+                if t_idx != first_appear_idx:
+                    tips_to_include.append(len(warped_to_eval) - 1)
+
+            warped_to_eval = np.array(warped_to_eval) if warped_to_eval else np.array([])
+            gt_to_eval = np.array(gt_to_eval) if gt_to_eval else np.array([])
+            num_tips_to_eval = len(warped_to_eval)
+
+        else:
+            # === POSITIONAL MATCHING (fallback when organ IDs not available) ===
+            # Assumption: tips are initialized in order and GT tips are in the same order
+            num_tips_to_eval = min(num_warped_tips, num_gt_tips)
+
+            if num_tips_to_eval > 0:
+                warped_to_eval = warped_tip_coords[:num_tips_to_eval]
+                gt_to_eval = gt_tip_coords[:num_tips_to_eval]
+
+                # Check if this is the first appearance for any tip
+                tips_to_include = []
+                for tip_id in range(num_tips_to_eval):
+                    if tip_id in tracked_tips:
+                        first_appear_idx, _, _ = tracked_tips[tip_id]
+                        if t_idx != first_appear_idx:
+                            # Not the first appearance, include this tip
+                            tips_to_include.append(tip_id)
             else:
-                # All tips are at their first appearance, skip this frame
-                mean_epe = None
-                epe_per_tip = np.full(num_tips_to_eval, np.nan)
-                n_tips_evaluated_all.append(0)
+                warped_to_eval = np.array([])
+                gt_to_eval = np.array([])
+                tips_to_include = []
 
+        # Now compute EPE with the matched tips
+        if num_tips_to_eval > 0 and len(tips_to_include) > 0:
+            # Compute EPE only for tips not at their first appearance
+            tips_to_include = np.array(tips_to_include)
+            epe_per_tip_filtered = np.linalg.norm(
+                warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
+                axis=1,
+            )
+            mean_epe = epe_per_tip_filtered.mean()
+
+            # For split computation, we need EPE per tip (including NaN for skipped tips)
+            epe_per_tip = np.full(num_tips_to_eval, np.nan)
+            epe_per_tip[tips_to_include] = np.linalg.norm(
+                warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
+                axis=1,
+            )
+
+            # Track how many tips were evaluated (excluding first appearance)
+            n_tips_evaluated_all.append(len(tips_to_include))
+            epe_values_all.append(mean_epe)
+        elif num_tips_to_eval > 0:
+            # All tips are at their first appearance, skip this frame
+            mean_epe = None
+            epe_per_tip = np.full(num_tips_to_eval, np.nan)
+            n_tips_evaluated_all.append(0)
+            epe_values_all.append(mean_epe)
+        else:
+            # No tips to evaluate
+            mean_epe = None
+            epe_per_tip = np.array([])
+            n_tips_evaluated_all.append(0)
             epe_values_all.append(mean_epe)
 
-            # Store ALL warped tips (for continuous tracking), but only GT tips that exist
-            warped_coords_all.append(warped_tip_coords)  # All tracked tips
-            gt_coords_all.append(gt_tip_coords)  # Only GT tips at this frame
+        # Store ALL warped tips (for continuous tracking), but only GT tips that exist
+        warped_coords_all.append(warped_tip_coords)  # All tracked tips
+        gt_coords_all.append(gt_tip_coords)  # Only GT tips at this frame
 
+        if num_tips_to_eval > 0:
             if mean_epe is not None:
                 if num_warped_tips != num_gt_tips:
                     logging.info(
@@ -788,7 +875,7 @@ def track_tips_with_warper(
                 test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
 
                 # Load tip indices from GT
-                gt_tip_indices_in_full_cloud, _ = load_leaf_tips_from_ply(gt_path)
+                gt_tip_indices_in_full_cloud, _, _ = load_leaf_tips_from_ply(gt_path)
 
                 # Separate tips into train and test (only for tips we evaluated)
                 train_tip_mask = np.isin(
@@ -1104,7 +1191,7 @@ def compute_metrics_for_epoch(args, epoch_num):
 
             # Load and split leaf tips if requested
             if args.compute_tip_epe:
-                gt_tip_indices_in_full_cloud, gt_tip_coords = load_leaf_tips_from_ply(
+                gt_tip_indices_in_full_cloud, gt_tip_coords, _ = load_leaf_tips_from_ply(
                     gt_path
                 )
 
@@ -1203,7 +1290,7 @@ def compute_metrics_for_epoch(args, epoch_num):
             # Load leaf tips from ground truth PLY file if requested (no-split case)
             if args.compute_tip_epe:
                 # Load GT leaf tips from PLY file
-                _, gt_tip_coords = load_leaf_tips_from_ply(gt_path)
+                _, gt_tip_coords, _ = load_leaf_tips_from_ply(gt_path)
 
                 if len(gt_tip_coords) > 0:
                     # Convert to tensor
