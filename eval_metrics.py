@@ -630,6 +630,11 @@ def track_tips_with_warper(
     epe_values_train = [] if point_splits else None
     epe_values_test = [] if point_splits else None
 
+    # Track number of tips evaluated per timepoint (excluding first appearance)
+    n_tips_evaluated_all = []
+    n_tips_evaluated_train = [] if point_splits else None
+    n_tips_evaluated_test = [] if point_splits else None
+
     # Also store warped and GT coordinates for AccS/AccR computation
     warped_coords_all = []
     gt_coords_all = []
@@ -643,11 +648,14 @@ def track_tips_with_warper(
         if len(gt_tip_coords) == 0:
             logging.info(f"Timepoint {t_idx}: No GT tips found, skipping")
             epe_values_all.append(None)
+            n_tips_evaluated_all.append(0)
             warped_coords_all.append(None)
             gt_coords_all.append(None)
             if point_splits:
                 epe_values_train.append(None)
                 epe_values_test.append(None)
+                n_tips_evaluated_train.append(0)
+                n_tips_evaluated_test.append(0)
                 warped_coords_test.append(None)
                 gt_coords_test.append(None)
             continue
@@ -732,10 +740,14 @@ def track_tips_with_warper(
                     warped_to_eval[tips_to_include] - gt_to_eval[tips_to_include],
                     axis=1,
                 )
+
+                # Track how many tips were evaluated (excluding first appearance)
+                n_tips_evaluated_all.append(len(tips_to_include))
             else:
                 # All tips are at their first appearance, skip this frame
                 mean_epe = None
                 epe_per_tip = np.full(num_tips_to_eval, np.nan)
+                n_tips_evaluated_all.append(0)
 
             epe_values_all.append(mean_epe)
 
@@ -795,10 +807,13 @@ def track_tips_with_warper(
                     if len(train_epe_values) > 0:
                         train_epe = train_epe_values.mean()
                         epe_values_train.append(train_epe)
+                        n_tips_evaluated_train.append(len(train_epe_values))
                     else:
                         epe_values_train.append(None)
+                        n_tips_evaluated_train.append(0)
                 else:
                     epe_values_train.append(None)
+                    n_tips_evaluated_train.append(0)
 
                 # Compute EPE for test tips
                 if test_tip_mask.sum() > 0:
@@ -809,14 +824,17 @@ def track_tips_with_warper(
                     if len(test_epe_values) > 0:
                         test_epe = test_epe_values.mean()
                         epe_values_test.append(test_epe)
+                        n_tips_evaluated_test.append(len(test_epe_values))
                     else:
                         epe_values_test.append(None)
+                        n_tips_evaluated_test.append(0)
                     # Store ALL tracked test tips for AccS/AccR (not just evaluated ones)
                     # This allows continuous flow computation even when GT is missing in some frames
                     warped_coords_test.append(warped_tip_coords)
                     gt_coords_test.append(gt_tip_coords)
                 else:
                     epe_values_test.append(None)
+                    n_tips_evaluated_test.append(0)
                     # Still store warped coords for continuous tracking, but no GT
                     warped_coords_test.append(warped_tip_coords)
                     gt_coords_test.append(None)
@@ -825,12 +843,15 @@ def track_tips_with_warper(
                 f"Timepoint {t_idx}: No tips to evaluate (warped: {num_warped_tips}, GT: {num_gt_tips})"
             )
             epe_values_all.append(None)
+            n_tips_evaluated_all.append(0)
             # Still store warped coords for continuous tracking
             warped_coords_all.append(warped_tip_coords if num_warped_tips > 0 else None)
             gt_coords_all.append(None)
             if point_splits:
                 epe_values_train.append(None)
                 epe_values_test.append(None)
+                n_tips_evaluated_train.append(0)
+                n_tips_evaluated_test.append(0)
                 warped_coords_test.append(
                     warped_tip_coords if num_warped_tips > 0 else None
                 )
@@ -838,12 +859,15 @@ def track_tips_with_warper(
 
     result = {
         "all": epe_values_all,
+        "n_tips_all": n_tips_evaluated_all,
         "warped_coords_all": warped_coords_all,
         "gt_coords_all": gt_coords_all,
     }
     if point_splits:
         result["train"] = epe_values_train
         result["test"] = epe_values_test
+        result["n_tips_train"] = n_tips_evaluated_train
+        result["n_tips_test"] = n_tips_evaluated_test
         result["warped_coords_test"] = warped_coords_test
         result["gt_coords_test"] = gt_coords_test
 
@@ -1386,6 +1410,7 @@ def compute_metrics_for_epoch(args, epoch_num):
             # Add results to metrics_json
             # Train tips
             train_epe_values = [v for v in tip_epe_results["train"] if v is not None]
+            train_n_tips = tip_epe_results["n_tips_train"]
             if len(train_epe_values) > 0:
                 train_epe_tensor = torch.tensor(train_epe_values)
                 metrics_json["train"]["num_timesteps_with_tips"] = len(train_epe_values)
@@ -1399,20 +1424,28 @@ def compute_metrics_for_epoch(args, epoch_num):
                 metrics_json["train"]["tip_epe_per_timestep"] = [
                     float(v) for v in tip_epe_results["train"] if v is not None
                 ]
+                metrics_json["train"]["n_tips_per_timepoint"] = train_n_tips
+                metrics_json["train"]["total_tips_evaluated"] = sum(train_n_tips)
                 logging.info(
                     f"Train Set - Leaf Tip EPE (warper): {metrics_json['train']['mean_tip_epe']:.6f}"
+                )
+                logging.info(
+                    f"Train Set - Total tips evaluated: {metrics_json['train']['total_tips_evaluated']}"
                 )
             else:
                 metrics_json["train"]["num_timesteps_with_tips"] = 0
                 metrics_json["train"]["mean_tip_epe"] = None
                 metrics_json["train"]["std_tip_epe"] = None
                 metrics_json["train"]["tip_epe_per_timestep"] = []
+                metrics_json["train"]["n_tips_per_timepoint"] = train_n_tips
+                metrics_json["train"]["total_tips_evaluated"] = sum(train_n_tips)
                 logging.info(
                     "Train Set - No leaf tips found (expected if tips are in test set)"
                 )
 
             # Test tips
             test_epe_values = [v for v in tip_epe_results["test"] if v is not None]
+            test_n_tips = tip_epe_results["n_tips_test"]
             if len(test_epe_values) > 0:
                 test_epe_tensor = torch.tensor(test_epe_values)
                 metrics_json["test"]["num_timesteps_with_tips"] = len(test_epe_values)
@@ -1426,14 +1459,21 @@ def compute_metrics_for_epoch(args, epoch_num):
                 metrics_json["test"]["tip_epe_per_timestep"] = [
                     float(v) for v in tip_epe_results["test"] if v is not None
                 ]
+                metrics_json["test"]["n_tips_per_timepoint"] = test_n_tips
+                metrics_json["test"]["total_tips_evaluated"] = sum(test_n_tips)
                 logging.info(
                     f"Test Set - Leaf Tip EPE (warper): {metrics_json['test']['mean_tip_epe']:.6f}"
+                )
+                logging.info(
+                    f"Test Set - Total tips evaluated: {metrics_json['test']['total_tips_evaluated']}"
                 )
             else:
                 metrics_json["test"]["num_timesteps_with_tips"] = 0
                 metrics_json["test"]["mean_tip_epe"] = None
                 metrics_json["test"]["std_tip_epe"] = None
                 metrics_json["test"]["tip_epe_per_timestep"] = []
+                metrics_json["test"]["n_tips_per_timepoint"] = test_n_tips
+                metrics_json["test"]["total_tips_evaluated"] = sum(test_n_tips)
                 logging.info("Test Set - No leaf tips found")
 
         # Log results
@@ -1585,6 +1625,7 @@ def compute_metrics_for_epoch(args, epoch_num):
 
             # Add results to metrics_json
             epe_values = [v for v in tip_epe_results["all"] if v is not None]
+            n_tips = tip_epe_results["n_tips_all"]
             if len(epe_values) > 0:
                 epe_tensor = torch.tensor(epe_values)
                 metrics_json["num_timesteps_with_tips"] = len(epe_values)
@@ -1596,14 +1637,21 @@ def compute_metrics_for_epoch(args, epoch_num):
                 metrics_json["tip_epe_per_timestep"] = [
                     float(v) for v in tip_epe_results["all"] if v is not None
                 ]
+                metrics_json["n_tips_per_timepoint"] = n_tips
+                metrics_json["total_tips_evaluated"] = sum(n_tips)
                 logging.info(
                     f"Leaf Tip EPE (warper): {metrics_json['mean_tip_epe']:.6f}"
+                )
+                logging.info(
+                    f"Total tips evaluated: {metrics_json['total_tips_evaluated']}"
                 )
             else:
                 metrics_json["num_timesteps_with_tips"] = 0
                 metrics_json["mean_tip_epe"] = None
                 metrics_json["std_tip_epe"] = None
                 metrics_json["tip_epe_per_timestep"] = []
+                metrics_json["n_tips_per_timepoint"] = n_tips
+                metrics_json["total_tips_evaluated"] = sum(n_tips)
                 logging.info("No leaf tips found in any timestep")
 
         # Log results
