@@ -2025,22 +2025,32 @@ def main():
 
     # Save summary if multiple epochs
     if len(all_metrics) > 1:
+        # Check if we have point splits (train/test) or not
+        has_splits = "test" in all_metrics[0]
+
+        # Extract metrics based on structure
+        if has_splits:
+            # Use test split metrics for summary (most relevant)
+            chamfer_distances = [m["test"]["mean_chamfer_distance"] for m in all_metrics]
+            epe_values = [m["test"].get("mean_tip_epe", None) for m in all_metrics]
+        else:
+            # Use top-level metrics
+            chamfer_distances = [m["mean_chamfer_distance"] for m in all_metrics]
+            epe_values = [m.get("mean_tip_epe", None) for m in all_metrics]
+
         summary = {
             "num_epochs_evaluated": len(all_metrics),
             "epochs": [m["epoch"] for m in all_metrics],
-            "mean_chamfer_distances": [m["mean_chamfer_distance"] for m in all_metrics],
-            "mean_epe": [m.get("mean_tip_epe", None) for m in all_metrics],
-            "best_epoch_by_chamfer": min(
-                all_metrics, key=lambda x: x["mean_chamfer_distance"]
-            )["epoch"],
+            "mean_chamfer_distances": chamfer_distances,
+            "mean_epe": epe_values,
+            "best_epoch_by_chamfer": all_metrics[chamfer_distances.index(min(chamfer_distances))]["epoch"],
         }
 
         if args.compute_tip_epe:
-            valid_epe_metrics = [m for m in all_metrics if "mean_tip_epe" in m]
-            if valid_epe_metrics:
-                summary["best_epoch_by_tip_epe"] = min(
-                    valid_epe_metrics, key=lambda x: x["mean_tip_epe"]
-                )["epoch"]
+            valid_epe_values = [v for v in epe_values if v is not None]
+            if valid_epe_values:
+                min_epe_idx = epe_values.index(min(valid_epe_values))
+                summary["best_epoch_by_tip_epe"] = all_metrics[min_epe_idx]["epoch"]
 
         summary_file = os.path.join(
             experiment_directory, "metrics", "metrics_summary.json"
