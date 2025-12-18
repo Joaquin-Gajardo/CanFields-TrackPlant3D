@@ -739,6 +739,7 @@ def track_tips_with_warper(
         num_warped_tips = len(warped_tip_coords)
 
         # Match warped tips to GT tips by organ ID (if available) or position (fallback)
+        # NOTE: this works but if code is changed, it's important to verify that the matched tip GT and preds correspond to the same timesteps
         if organ_id_available and gt_tip_organ_labels is not None:
             # === ORGAN ID BASED MATCHING (robust to appearance/disappearance) ===
             # Build list of organ IDs that were actually warped (same order as warped_tip_coords)
