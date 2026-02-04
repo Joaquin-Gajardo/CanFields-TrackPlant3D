@@ -104,6 +104,28 @@ pip uninstall plant-shape-analysis -y && pip install git+https://github.com/Joaq
 python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw --output-dir datasets/Pheno4D/processed # Defaults: --version v2 --mode both --export-sparse
 ````
 
+New
+````bash
+# 1. Generate all leaf sequences (256 total, including all val/test)
+python datasets/prepare_pheno4d.py \
+      --dataset-path datasets/Pheno4D/raw \
+      --version v2 \
+      --output-dir datasets/Pheno4D/processed \
+      --mode leaf \
+      --min-timepoints 2 \
+      --overwrite
+
+# 2. Extract all stem sequences (42 total)
+python scripts/extract_stem_sequences.py \
+      --dataset-path datasets/Pheno4D/processed/v2
+
+# 3. Generate organ split files for val/test sequences (73 organ splits): same as used for our method
+python scripts/generate_organ_splits.py \
+      --dataset-path datasets/Pheno4D/processed/v2 \
+      --plant-splits-dir configs/point_splits \
+      --output-dir configs/point_splits
+````
+
 #### Leaf sequence
 ```bash
 # Train CanFields
