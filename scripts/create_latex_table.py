@@ -25,11 +25,11 @@ Usage:
 import argparse
 from collections import OrderedDict
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
-def aggregate_by_method(df, split='test', min_timesteps=None):
+def aggregate_by_method(df, split="test", min_timesteps=None):
     """
     Aggregate metrics by method (across sequences).
 
@@ -42,89 +42,97 @@ def aggregate_by_method(df, split='test', min_timesteps=None):
         Dictionary mapping method -> statistics
     """
     # Filter by split
-    df_split = df[df['split'] == split].copy()
+    df_split = df[df["split"] == split].copy()
 
     # Filter by minimum timesteps if specified
-    if min_timesteps is not None and 'num_timesteps' in df_split.columns:
+    if min_timesteps is not None and "num_timesteps" in df_split.columns:
         original_count = len(df_split)
-        df_split = df_split[df_split['num_timesteps'] >= min_timesteps].copy()
+        df_split = df_split[df_split["num_timesteps"] >= min_timesteps].copy()
         filtered_count = len(df_split)
         if filtered_count < original_count:
-            print(f"Filtered {original_count - filtered_count} rows with < {min_timesteps} timesteps")
+            print(
+                f"Filtered {original_count - filtered_count} rows with < {min_timesteps} timesteps"
+            )
             print(f"Remaining: {filtered_count} rows")
 
     # Group by method and sequence, then compute mean per sequence
     # This gives us one value per sequence per method
-    seq_means = df_split.groupby(['method', 'sequence']).agg({
-        'mean_cd': 'mean',
-        'mean_nc': 'mean',
-        'mean_epe': 'mean',
-        'mean_accs': 'mean',
-        'mean_accr': 'mean',
-        'mean_epe3d_flow': 'mean',
-        'storage_mb': 'first',  # Same for all timepoints
-        'runtime_minutes': 'first'  # Same for all timepoints
-    }).reset_index()
+    seq_means = (
+        df_split.groupby(["method", "sequence"])
+        .agg(
+            {
+                "mean_cd": "mean",
+                "mean_nc": "mean",
+                "mean_epe": "mean",
+                "mean_accs": "mean",
+                "mean_accr": "mean",
+                "mean_epe3d_flow": "mean",
+                "storage_mb": "first",  # Same for all timepoints
+                "runtime_minutes": "first",  # Same for all timepoints
+            }
+        )
+        .reset_index()
+    )
 
     # Now aggregate across sequences for each method
     results = {}
-    for method in seq_means['method'].unique():
-        method_data = seq_means[seq_means['method'] == method]
+    for method in seq_means["method"].unique():
+        method_data = seq_means[seq_means["method"] == method]
 
         stats = {}
 
         # CD
-        cd_values = method_data['mean_cd'].dropna()
+        cd_values = method_data["mean_cd"].dropna()
         if len(cd_values) > 0:
-            stats['cd_mean'] = cd_values.mean()
-            stats['cd_std'] = cd_values.std()
-            stats['cd_sem'] = cd_values.sem()
+            stats["cd_mean"] = cd_values.mean()
+            stats["cd_std"] = cd_values.std()
+            stats["cd_sem"] = cd_values.sem()
 
         # NC
-        nc_values = method_data['mean_nc'].dropna()
+        nc_values = method_data["mean_nc"].dropna()
         if len(nc_values) > 0:
-            stats['nc_mean'] = nc_values.mean()
-            stats['nc_std'] = nc_values.std()
-            stats['nc_sem'] = nc_values.sem()
+            stats["nc_mean"] = nc_values.mean()
+            stats["nc_std"] = nc_values.std()
+            stats["nc_sem"] = nc_values.sem()
 
         # EPE
-        epe_values = method_data['mean_epe'].dropna()
+        epe_values = method_data["mean_epe"].dropna()
         if len(epe_values) > 0:
-            stats['epe_mean'] = epe_values.mean()
-            stats['epe_std'] = epe_values.std()
-            stats['epe_sem'] = epe_values.sem()
+            stats["epe_mean"] = epe_values.mean()
+            stats["epe_std"] = epe_values.std()
+            stats["epe_sem"] = epe_values.sem()
 
         # AccS
-        accs_values = method_data['mean_accs'].dropna()
+        accs_values = method_data["mean_accs"].dropna()
         if len(accs_values) > 0:
-            stats['accs_mean'] = accs_values.mean()
-            stats['accs_std'] = accs_values.std()
-            stats['accs_sem'] = accs_values.sem()
+            stats["accs_mean"] = accs_values.mean()
+            stats["accs_std"] = accs_values.std()
+            stats["accs_sem"] = accs_values.sem()
 
         # AccR
-        accr_values = method_data['mean_accr'].dropna()
+        accr_values = method_data["mean_accr"].dropna()
         if len(accr_values) > 0:
-            stats['accr_mean'] = accr_values.mean()
-            stats['accr_std'] = accr_values.std()
-            stats['accr_sem'] = accr_values.sem()
+            stats["accr_mean"] = accr_values.mean()
+            stats["accr_std"] = accr_values.std()
+            stats["accr_sem"] = accr_values.sem()
 
         # Storage (take mean across sequences)
-        storage_values = method_data['storage_mb'].dropna()
+        storage_values = method_data["storage_mb"].dropna()
         if len(storage_values) > 0:
-            stats['storage_mean'] = storage_values.mean()
+            stats["storage_mean"] = storage_values.mean()
 
         # Runtime (take mean across sequences)
-        runtime_values = method_data['runtime_minutes'].dropna()
+        runtime_values = method_data["runtime_minutes"].dropna()
         if len(runtime_values) > 0:
-            stats['runtime_mean'] = runtime_values.mean()
+            stats["runtime_mean"] = runtime_values.mean()
 
-        stats['n_sequences'] = len(method_data)
+        stats["n_sequences"] = len(method_data)
         results[method] = stats
 
     return results
 
 
-def format_latex_row(method, stats, format_spec='mean_sem'):
+def format_latex_row(method, stats, format_spec="mean_sem"):
     """
     Format statistics as a LaTeX table row.
 
@@ -139,13 +147,13 @@ def format_latex_row(method, stats, format_spec='mean_sem'):
     parts = [method]
 
     # CD (Chamfer Distance) - in mm, show 1 decimal
-    if 'cd_mean' in stats:
-        cd_mean = stats['cd_mean']
-        if format_spec == 'mean_sem' and 'cd_sem' in stats:
-            cd_err = stats['cd_sem']
+    if "cd_mean" in stats:
+        cd_mean = stats["cd_mean"]
+        if format_spec == "mean_sem" and "cd_sem" in stats:
+            cd_err = stats["cd_sem"]
             parts.append(f"{cd_mean:.1f} $\\pm$ {cd_err:.1f}")
-        elif format_spec == 'mean_std' and 'cd_std' in stats:
-            cd_std = stats['cd_std']
+        elif format_spec == "mean_std" and "cd_std" in stats:
+            cd_std = stats["cd_std"]
             parts.append(f"{cd_mean:.1f} $\\pm$ {cd_std:.1f}")
         else:
             parts.append(f"{cd_mean:.1f}")
@@ -153,13 +161,13 @@ def format_latex_row(method, stats, format_spec='mean_sem'):
         parts.append("--")
 
     # NC (Normal Consistency) - show 3 decimals
-    if 'nc_mean' in stats:
-        nc_mean = stats['nc_mean']
-        if format_spec == 'mean_sem' and 'nc_sem' in stats:
-            nc_err = stats['nc_sem']
+    if "nc_mean" in stats:
+        nc_mean = stats["nc_mean"]
+        if format_spec == "mean_sem" and "nc_sem" in stats:
+            nc_err = stats["nc_sem"]
             parts.append(f"{nc_mean:.3f} $\\pm$ {nc_err:.3f}")
-        elif format_spec == 'mean_std' and 'nc_std' in stats:
-            nc_std = stats['nc_std']
+        elif format_spec == "mean_std" and "nc_std" in stats:
+            nc_std = stats["nc_std"]
             parts.append(f"{nc_mean:.3f} $\\pm$ {nc_std:.3f}")
         else:
             parts.append(f"{nc_mean:.3f}")
@@ -167,13 +175,13 @@ def format_latex_row(method, stats, format_spec='mean_sem'):
         parts.append("--")
 
     # EPE (End Point Error) - in mm, show 1 decimal
-    if 'epe_mean' in stats:
-        epe_mean = stats['epe_mean']
-        if format_spec == 'mean_sem' and 'epe_sem' in stats:
-            epe_err = stats['epe_sem']
+    if "epe_mean" in stats:
+        epe_mean = stats["epe_mean"]
+        if format_spec == "mean_sem" and "epe_sem" in stats:
+            epe_err = stats["epe_sem"]
             parts.append(f"{epe_mean:.1f} $\\pm$ {epe_err:.1f}")
-        elif format_spec == 'mean_std' and 'epe_std' in stats:
-            epe_std = stats['epe_std']
+        elif format_spec == "mean_std" and "epe_std" in stats:
+            epe_std = stats["epe_std"]
             parts.append(f"{epe_mean:.1f} $\\pm$ {epe_std:.1f}")
         else:
             parts.append(f"{epe_mean:.1f}")
@@ -181,13 +189,13 @@ def format_latex_row(method, stats, format_spec='mean_sem'):
         parts.append("--")
 
     # AccS (Strict Accuracy) - percentage, show 1 decimal
-    if 'accs_mean' in stats:
-        accs_mean = stats['accs_mean']
-        if format_spec == 'mean_sem' and 'accs_sem' in stats:
-            accs_err = stats['accs_sem']
+    if "accs_mean" in stats:
+        accs_mean = stats["accs_mean"]
+        if format_spec == "mean_sem" and "accs_sem" in stats:
+            accs_err = stats["accs_sem"]
             parts.append(f"{accs_mean:.1f} $\\pm$ {accs_err:.1f}")
-        elif format_spec == 'mean_std' and 'accs_std' in stats:
-            accs_std = stats['accs_std']
+        elif format_spec == "mean_std" and "accs_std" in stats:
+            accs_std = stats["accs_std"]
             parts.append(f"{accs_mean:.1f} $\\pm$ {accs_std:.1f}")
         else:
             parts.append(f"{accs_mean:.1f}")
@@ -195,13 +203,13 @@ def format_latex_row(method, stats, format_spec='mean_sem'):
         parts.append("--")
 
     # AccR (Relaxed Accuracy) - percentage, show 1 decimal
-    if 'accr_mean' in stats:
-        accr_mean = stats['accr_mean']
-        if format_spec == 'mean_sem' and 'accr_sem' in stats:
-            accr_err = stats['accr_sem']
+    if "accr_mean" in stats:
+        accr_mean = stats["accr_mean"]
+        if format_spec == "mean_sem" and "accr_sem" in stats:
+            accr_err = stats["accr_sem"]
             parts.append(f"{accr_mean:.1f} $\\pm$ {accr_err:.1f}")
-        elif format_spec == 'mean_std' and 'accr_std' in stats:
-            accr_std = stats['accr_std']
+        elif format_spec == "mean_std" and "accr_std" in stats:
+            accr_std = stats["accr_std"]
             parts.append(f"{accr_mean:.1f} $\\pm$ {accr_std:.1f}")
         else:
             parts.append(f"{accr_mean:.1f}")
@@ -209,15 +217,15 @@ def format_latex_row(method, stats, format_spec='mean_sem'):
         parts.append("--")
 
     # Runtime (minutes) - show 0 decimals
-    if 'runtime_mean' in stats:
-        runtime_min = stats['runtime_mean']
+    if "runtime_mean" in stats:
+        runtime_min = stats["runtime_mean"]
         parts.append(f"{runtime_min:.0f}")
     else:
         parts.append("--")
 
     # Storage (MB) - show 1 decimal
-    if 'storage_mean' in stats:
-        storage_mb = stats['storage_mean']
+    if "storage_mean" in stats:
+        storage_mb = stats["storage_mean"]
         parts.append(f"{storage_mb:.1f}")
     else:
         parts.append("--")
@@ -230,7 +238,9 @@ def generate_latex_header():
     lines = []
     lines.append(r"\begin{table}[htbp]")
     lines.append(r"\centering")
-    lines.append(r"\caption{4D plant reconstruction metrics on test set. We report mean $\pm$ SEM across sequences. CD: Chamfer Distance (mm), NC: Normal Consistency, EPE: End Point Error (mm), AccS/AccR: Strict/Relaxed Accuracy (\%).}")
+    lines.append(
+        r"\caption{4D plant reconstruction metrics on test set. We report mean $\pm$ SEM across sequences. CD: Chamfer Distance (mm), NC: Normal Consistency, EPE: End Point Error (mm), AccS/AccR: Strict/Relaxed Accuracy (\%).}"
+    )
     lines.append(r"\label{tab:plant_metrics}")
     lines.append(r"\begin{tabular}{lccccccc}")
     lines.append(r"\toprule")
@@ -255,25 +265,35 @@ def print_summary_stats(method, stats):
     print(f"\n{method}:")
     print(f"  Sequences: {stats.get('n_sequences', 'N/A')}")
 
-    if 'cd_mean' in stats:
-        print(f"  CD:      {stats['cd_mean']:.1f} ± {stats.get('cd_sem', stats.get('cd_std', 0)):.1f} mm")
+    if "cd_mean" in stats:
+        print(
+            f"  CD:      {stats['cd_mean']:.1f} ± {stats.get('cd_sem', stats.get('cd_std', 0)):.1f} mm"
+        )
 
-    if 'nc_mean' in stats:
-        print(f"  NC:      {stats['nc_mean']:.3f} ± {stats.get('nc_sem', stats.get('nc_std', 0)):.3f}")
+    if "nc_mean" in stats:
+        print(
+            f"  NC:      {stats['nc_mean']:.3f} ± {stats.get('nc_sem', stats.get('nc_std', 0)):.3f}"
+        )
 
-    if 'epe_mean' in stats:
-        print(f"  EPE:     {stats['epe_mean']:.1f} ± {stats.get('epe_sem', stats.get('epe_std', 0)):.1f} mm")
+    if "epe_mean" in stats:
+        print(
+            f"  EPE:     {stats['epe_mean']:.1f} ± {stats.get('epe_sem', stats.get('epe_std', 0)):.1f} mm"
+        )
 
-    if 'accs_mean' in stats:
-        print(f"  AccS:    {stats['accs_mean']:.1f} ± {stats.get('accs_sem', stats.get('accs_std', 0)):.1f}%")
+    if "accs_mean" in stats:
+        print(
+            f"  AccS:    {stats['accs_mean']:.1f} ± {stats.get('accs_sem', stats.get('accs_std', 0)):.1f}%"
+        )
 
-    if 'accr_mean' in stats:
-        print(f"  AccR:    {stats['accr_mean']:.1f} ± {stats.get('accr_sem', stats.get('accr_std', 0)):.1f}%")
+    if "accr_mean" in stats:
+        print(
+            f"  AccR:    {stats['accr_mean']:.1f} ± {stats.get('accr_sem', stats.get('accr_std', 0)):.1f}%"
+        )
 
-    if 'runtime_mean' in stats:
+    if "runtime_mean" in stats:
         print(f"  Runtime: {stats['runtime_mean']:.0f} min")
 
-    if 'storage_mean' in stats:
+    if "storage_mean" in stats:
         print(f"  Storage: {stats['storage_mean']:.1f} MB")
 
 
@@ -283,23 +303,23 @@ def abbreviate_sequence(seq_name):
     Maps e.g. maize_control_plant2 → MaC2, tomato1_heat_plant3 → Tm1H3.
     """
     species_map = {
-        'maize': 'Ma',
-        'sorghum': 'So',
-        'tobacco': 'Tb',
-        'tomato1': 'Tm1',
-        'tomato2': 'Tm2',
+        "maize": "Ma",
+        "sorghum": "So",
+        "tobacco": "Tb",
+        "tomato1": "Tm1",
+        "tomato2": "Tm2",
     }
     condition_map = {
-        'control': 'C',
-        'heat': 'H',
-        'highlight': 'H',
-        'shade': 'S',
+        "control": "C",
+        "heat": "H",
+        "highlight": "H",
+        "shade": "S",
     }
 
-    parts = seq_name.split('_')
+    parts = seq_name.split("_")
     species = parts[0]
     condition = parts[1]
-    plant_num = parts[2].replace('plant', '')
+    plant_num = parts[2].replace("plant", "")
 
     return f"{species_map.get(species, species)}{condition_map.get(condition, condition)}{plant_num}"
 
@@ -309,15 +329,15 @@ def get_parent_sequence(seq_name):
 
     E.g. maize_control_plant2_leaf1 → maize_control_plant2
     """
-    parts = seq_name.split('_')
-    return '_'.join(parts[:3])
+    parts = seq_name.split("_")
+    return "_".join(parts[:3])
 
 
 def detect_organ_sequences(sequences):
     """Check if sequences are organ-level (contain leaf/stem suffixes)."""
     for seq in sequences:
-        parts = seq.split('_')
-        if len(parts) >= 4 and any(p.startswith(('leaf', 'stem')) for p in parts[3:]):
+        parts = seq.split("_")
+        if len(parts) >= 4 and any(p.startswith(("leaf", "stem")) for p in parts[3:]):
             return True
     return False
 
@@ -332,46 +352,52 @@ def compute_per_sequence_stats(df, split):
                 list of sorted sequence names,
                 dict {method: {'cd': val, 'epe': val}} flat averages for Avg column)
     """
-    df_split = df[df['split'] == split].copy()
+    df_split = df[df["split"] == split].copy()
 
-    is_organs = detect_organ_sequences(df_split['sequence'].unique())
+    is_organs = detect_organ_sequences(df_split["sequence"].unique())
 
     if is_organs:
-        df_split['parent_sequence'] = df_split['sequence'].apply(get_parent_sequence)
-        group_col = 'parent_sequence'
+        df_split["parent_sequence"] = df_split["sequence"].apply(get_parent_sequence)
+        group_col = "parent_sequence"
     else:
-        group_col = 'sequence'
+        group_col = "sequence"
 
     all_sequences = sorted(df_split[group_col].unique())
 
-    grouped = df_split.groupby(['method', group_col]).agg({
-        'mean_cd': 'mean',
-        'mean_epe': 'mean',
-    }).reset_index()
+    grouped = (
+        df_split.groupby(["method", group_col])
+        .agg(
+            {
+                "mean_cd": "mean",
+                "mean_epe": "mean",
+            }
+        )
+        .reset_index()
+    )
 
     results = {}
-    for method in grouped['method'].unique():
-        method_data = grouped[grouped['method'] == method]
+    for method in grouped["method"].unique():
+        method_data = grouped[grouped["method"] == method]
         seq_stats = OrderedDict()
         for seq in all_sequences:
             seq_row = method_data[method_data[group_col] == seq]
             if len(seq_row) > 0:
                 seq_stats[seq] = {
-                    'cd': seq_row['mean_cd'].values[0],
-                    'epe': seq_row['mean_epe'].values[0],
+                    "cd": seq_row["mean_cd"].values[0],
+                    "epe": seq_row["mean_epe"].values[0],
                 }
             else:
-                seq_stats[seq] = {'cd': np.nan, 'epe': np.nan}
+                seq_stats[seq] = {"cd": np.nan, "epe": np.nan}
         results[method] = seq_stats
 
     # Flat average across all individual sequences (not parent-level means)
     # so that Avg column matches the default aggregated table
     flat_avgs = {}
     for method in results:
-        method_data = df_split[df_split['method'] == method]
+        method_data = df_split[df_split["method"] == method]
         flat_avgs[method] = {
-            'cd': method_data['mean_cd'].mean(),
-            'epe': method_data['mean_epe'].mean(),
+            "cd": method_data["mean_cd"].mean(),
+            "epe": method_data["mean_epe"].mean(),
         }
 
     return results, all_sequences, flat_avgs
@@ -385,7 +411,9 @@ def generate_per_sequence_header(sequences):
     lines = []
     lines.append(r"\begin{table*}[htbp]")
     lines.append(r"\centering")
-    lines.append(r"\caption{Per-sequence 4D plant reconstruction metrics on test set. CD: Chamfer Distance (mm), EPE: End Point Error (mm).}")
+    lines.append(
+        r"\caption{Per-sequence 4D plant reconstruction metrics on test set. CD: Chamfer Distance (mm), EPE: End Point Error (mm).}"
+    )
     lines.append(r"\label{tab:per_sequence_metrics}")
     lines.append(r"\resizebox{\textwidth}{!}{%")
 
@@ -398,7 +426,7 @@ def generate_per_sequence_header(sequences):
     header_parts = [""]
     for abbr in abbreviations:
         header_parts.append(r"\multicolumn{2}{c}{" + abbr + "}")
-    header_parts.append(r"\multicolumn{2}{c}{Avg}")
+    header_parts.append(r"\multicolumn{2}{c}{\textit{Mean}}")
     lines.append(" & ".join(header_parts) + r" \\")
 
     # Cmidrule for each sequence group
@@ -446,9 +474,9 @@ def format_per_sequence_row(method, seq_stats, sequences, flat_avg=None):
     parts = [method]
 
     for seq in sequences:
-        stats = seq_stats.get(seq, {'cd': np.nan, 'epe': np.nan})
-        cd_val = stats['cd']
-        epe_val = stats['epe']
+        stats = seq_stats.get(seq, {"cd": np.nan, "epe": np.nan})
+        cd_val = stats["cd"]
+        epe_val = stats["epe"]
 
         if pd.notna(cd_val):
             parts.append(f"{cd_val:.1f}")
@@ -462,11 +490,11 @@ def format_per_sequence_row(method, seq_stats, sequences, flat_avg=None):
 
     # Avg column: use flat average if provided, otherwise mean of column values
     if flat_avg is not None:
-        cd_avg = flat_avg['cd']
-        epe_avg = flat_avg['epe']
+        cd_avg = flat_avg["cd"]
+        epe_avg = flat_avg["epe"]
     else:
-        cd_vals = [s['cd'] for s in seq_stats.values() if pd.notna(s['cd'])]
-        epe_vals = [s['epe'] for s in seq_stats.values() if pd.notna(s['epe'])]
+        cd_vals = [s["cd"] for s in seq_stats.values() if pd.notna(s["cd"])]
+        epe_vals = [s["epe"] for s in seq_stats.values() if pd.notna(s["epe"])]
         cd_avg = np.mean(cd_vals) if cd_vals else np.nan
         epe_avg = np.mean(epe_vals) if epe_vals else np.nan
 
@@ -477,56 +505,48 @@ def format_per_sequence_row(method, seq_stats, sequences, flat_avg=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Create LaTeX table from metrics CSV"
-    )
-    parser.add_argument(
-        "--csv",
-        type=str,
-        help="Path to results CSV file"
-    )
+    parser = argparse.ArgumentParser(description="Create LaTeX table from metrics CSV")
+    parser.add_argument("--csv", type=str, help="Path to results CSV file")
     parser.add_argument(
         "--methods",
         type=str,
         nargs="+",
         default=None,
-        help="Methods to include (default: all)"
+        help="Methods to include (default: all)",
     )
     parser.add_argument(
         "--split",
         type=str,
         choices=["test", "train"],
         default="test",
-        help="Which split to use (default: test)"
+        help="Which split to use (default: test)",
     )
     parser.add_argument(
         "--format",
         type=str,
         choices=["mean_sem", "mean_std", "mean_only"],
         default="mean_sem",
-        help="Format for values: mean_sem (default), mean_std, or mean_only"
+        help="Format for values: mean_sem (default), mean_std, or mean_only",
     )
     parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help="Output file for LaTeX table (default: print to stdout)"
+        help="Output file for LaTeX table (default: print to stdout)",
     )
     parser.add_argument(
-        "--header_only",
-        action="store_true",
-        help="Print only the LaTeX table header"
+        "--header_only", action="store_true", help="Print only the LaTeX table header"
     )
     parser.add_argument(
         "--min_timesteps",
         type=int,
         default=None,
-        help="Minimum number of timesteps to include sequences (default: no filter)"
+        help="Minimum number of timesteps to include sequences (default: no filter)",
     )
     parser.add_argument(
         "--per_sequence",
         action="store_true",
-        help="Generate per-sequence table with CD and EPE columns per sequence"
+        help="Generate per-sequence table with CD and EPE columns per sequence",
     )
 
     args = parser.parse_args()
@@ -557,26 +577,32 @@ def main():
     print(f"  Sequences: {df['sequence'].nunique()}")
 
     # Show timestep distribution if filtering is requested
-    if args.min_timesteps is not None and 'num_timesteps' in df.columns:
+    if args.min_timesteps is not None and "num_timesteps" in df.columns:
         print(f"\nTimestep distribution:")
         print(f"  Min: {df['num_timesteps'].min()}")
         print(f"  Max: {df['num_timesteps'].max()}")
         print(f"  Mean: {df['num_timesteps'].mean():.1f}")
-        print(f"  Sequences with >= {args.min_timesteps} timesteps: {len(df[df['num_timesteps'] >= args.min_timesteps])}/{len(df)}")
+        print(
+            f"  Sequences with >= {args.min_timesteps} timesteps: {len(df[df['num_timesteps'] >= args.min_timesteps])}/{len(df)}"
+        )
 
     # Per-sequence table mode
     if args.per_sequence:
         if args.methods:
-            df = df[df['method'].isin(args.methods)]
+            df = df[df["method"].isin(args.methods)]
 
-        per_seq_stats, sequences, flat_avgs = compute_per_sequence_stats(df, split=args.split)
+        per_seq_stats, sequences, flat_avgs = compute_per_sequence_stats(
+            df, split=args.split
+        )
 
         header = generate_per_sequence_header(sequences)
         footer = generate_per_sequence_footer()
 
         rows = []
         for method in sorted(per_seq_stats.keys()):
-            row = format_per_sequence_row(method, per_seq_stats[method], sequences, flat_avgs[method])
+            row = format_per_sequence_row(
+                method, per_seq_stats[method], sequences, flat_avgs[method]
+            )
             rows.append(row)
 
         table = f"{header}\n" + "\n".join(rows) + f"\n{footer}"
@@ -595,7 +621,9 @@ def main():
 
     # Aggregate by method
     print(f"\nAggregating by method (split: {args.split})...")
-    method_stats = aggregate_by_method(df, split=args.split, min_timesteps=args.min_timesteps)
+    method_stats = aggregate_by_method(
+        df, split=args.split, min_timesteps=args.min_timesteps
+    )
 
     # Filter methods if specified
     if args.methods:
