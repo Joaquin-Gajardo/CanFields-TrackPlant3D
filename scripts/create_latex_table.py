@@ -23,6 +23,8 @@ Usage:
 """
 
 import argparse
+from collections import OrderedDict
+
 import pandas as pd
 import numpy as np
 
@@ -275,6 +277,205 @@ def print_summary_stats(method, stats):
         print(f"  Storage: {stats['storage_mean']:.1f} MB")
 
 
+def abbreviate_sequence(seq_name):
+    """Abbreviate sequence name for table headers.
+
+    Maps e.g. maize_control_plant2 → MaC2, tomato1_heat_plant3 → Tm1H3.
+    """
+    species_map = {
+        'maize': 'Ma',
+        'sorghum': 'So',
+        'tobacco': 'Tb',
+        'tomato1': 'Tm1',
+        'tomato2': 'Tm2',
+    }
+    condition_map = {
+        'control': 'C',
+        'heat': 'H',
+        'highlight': 'H',
+        'shade': 'S',
+    }
+
+    parts = seq_name.split('_')
+    species = parts[0]
+    condition = parts[1]
+    plant_num = parts[2].replace('plant', '')
+
+    return f"{species_map.get(species, species)}{condition_map.get(condition, condition)}{plant_num}"
+
+
+def get_parent_sequence(seq_name):
+    """Extract parent plant from organ sequence name.
+
+    E.g. maize_control_plant2_leaf1 → maize_control_plant2
+    """
+    parts = seq_name.split('_')
+    return '_'.join(parts[:3])
+
+
+def detect_organ_sequences(sequences):
+    """Check if sequences are organ-level (contain leaf/stem suffixes)."""
+    for seq in sequences:
+        parts = seq.split('_')
+        if len(parts) >= 4 and any(p.startswith(('leaf', 'stem')) for p in parts[3:]):
+            return True
+    return False
+
+
+def compute_per_sequence_stats(df, split):
+    """Compute per-sequence CD and EPE for each method.
+
+    For organ sequences, groups by parent plant and averages across organs.
+
+    Returns:
+        tuple: (dict {method: OrderedDict({sequence: {'cd': val, 'epe': val}})},
+                list of sorted sequence names,
+                dict {method: {'cd': val, 'epe': val}} flat averages for Avg column)
+    """
+    df_split = df[df['split'] == split].copy()
+
+    is_organs = detect_organ_sequences(df_split['sequence'].unique())
+
+    if is_organs:
+        df_split['parent_sequence'] = df_split['sequence'].apply(get_parent_sequence)
+        group_col = 'parent_sequence'
+    else:
+        group_col = 'sequence'
+
+    all_sequences = sorted(df_split[group_col].unique())
+
+    grouped = df_split.groupby(['method', group_col]).agg({
+        'mean_cd': 'mean',
+        'mean_epe': 'mean',
+    }).reset_index()
+
+    results = {}
+    for method in grouped['method'].unique():
+        method_data = grouped[grouped['method'] == method]
+        seq_stats = OrderedDict()
+        for seq in all_sequences:
+            seq_row = method_data[method_data[group_col] == seq]
+            if len(seq_row) > 0:
+                seq_stats[seq] = {
+                    'cd': seq_row['mean_cd'].values[0],
+                    'epe': seq_row['mean_epe'].values[0],
+                }
+            else:
+                seq_stats[seq] = {'cd': np.nan, 'epe': np.nan}
+        results[method] = seq_stats
+
+    # Flat average across all individual sequences (not parent-level means)
+    # so that Avg column matches the default aggregated table
+    flat_avgs = {}
+    for method in results:
+        method_data = df_split[df_split['method'] == method]
+        flat_avgs[method] = {
+            'cd': method_data['mean_cd'].mean(),
+            'epe': method_data['mean_epe'].mean(),
+        }
+
+    return results, all_sequences, flat_avgs
+
+
+def generate_per_sequence_header(sequences):
+    """Generate LaTeX header for per-sequence table."""
+    abbreviations = [abbreviate_sequence(seq) for seq in sequences]
+    n_seq = len(sequences)
+
+    lines = []
+    lines.append(r"\begin{table*}[htbp]")
+    lines.append(r"\centering")
+    lines.append(r"\caption{Per-sequence 4D plant reconstruction metrics on test set. CD: Chamfer Distance (mm), EPE: End Point Error (mm).}")
+    lines.append(r"\label{tab:per_sequence_metrics}")
+    lines.append(r"\resizebox{\textwidth}{!}{%")
+
+    # Column spec: l + cc for each sequence + cc for Avg
+    col_spec = "l" + " cc" * (n_seq + 1)
+    lines.append(r"\begin{tabular}{" + col_spec + "}")
+    lines.append(r"\toprule")
+
+    # First header row: multicolumn sequence names
+    header_parts = [""]
+    for abbr in abbreviations:
+        header_parts.append(r"\multicolumn{2}{c}{" + abbr + "}")
+    header_parts.append(r"\multicolumn{2}{c}{Avg}")
+    lines.append(" & ".join(header_parts) + r" \\")
+
+    # Cmidrule for each sequence group
+    cmidrules = []
+    for i in range(n_seq + 1):  # +1 for Avg
+        start = 2 * i + 2
+        end = 2 * i + 3
+        cmidrules.append(f"\\cmidrule(lr){{{start}-{end}}}")
+    lines.append(" ".join(cmidrules))
+
+    # Second header row: metric sub-headers
+    metric_parts = ["Method"]
+    for _ in range(n_seq + 1):  # +1 for Avg
+        metric_parts.append(r"CD $\downarrow$")
+        metric_parts.append(r"EPE $\downarrow$")
+    lines.append(" & ".join(metric_parts) + r" \\")
+    lines.append(r"\midrule")
+
+    return "\n".join(lines)
+
+
+def generate_per_sequence_footer():
+    """Generate LaTeX footer for per-sequence table."""
+    lines = []
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabular}")
+    lines.append(r"}")  # close resizebox
+    lines.append(r"\end{table*}")
+    return "\n".join(lines)
+
+
+def format_per_sequence_row(method, seq_stats, sequences, flat_avg=None):
+    """Format a single method row for per-sequence table.
+
+    Args:
+        method: Method name
+        seq_stats: OrderedDict {sequence: {'cd': val, 'epe': val}}
+        sequences: List of sequence names (for ordering)
+        flat_avg: Optional dict {'cd': val, 'epe': val} with pre-computed flat
+                  averages (ensures consistency with default aggregated table)
+
+    Returns:
+        LaTeX row string
+    """
+    parts = [method]
+
+    for seq in sequences:
+        stats = seq_stats.get(seq, {'cd': np.nan, 'epe': np.nan})
+        cd_val = stats['cd']
+        epe_val = stats['epe']
+
+        if pd.notna(cd_val):
+            parts.append(f"{cd_val:.1f}")
+        else:
+            parts.append("--")
+
+        if pd.notna(epe_val):
+            parts.append(f"{epe_val:.1f}")
+        else:
+            parts.append("--")
+
+    # Avg column: use flat average if provided, otherwise mean of column values
+    if flat_avg is not None:
+        cd_avg = flat_avg['cd']
+        epe_avg = flat_avg['epe']
+    else:
+        cd_vals = [s['cd'] for s in seq_stats.values() if pd.notna(s['cd'])]
+        epe_vals = [s['epe'] for s in seq_stats.values() if pd.notna(s['epe'])]
+        cd_avg = np.mean(cd_vals) if cd_vals else np.nan
+        epe_avg = np.mean(epe_vals) if epe_vals else np.nan
+
+    parts.append(f"{cd_avg:.1f}" if pd.notna(cd_avg) else "--")
+    parts.append(f"{epe_avg:.1f}" if pd.notna(epe_avg) else "--")
+
+    return " & ".join(parts) + r" \\"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Create LaTeX table from metrics CSV"
@@ -322,6 +523,11 @@ def main():
         default=None,
         help="Minimum number of timesteps to include sequences (default: no filter)"
     )
+    parser.add_argument(
+        "--per_sequence",
+        action="store_true",
+        help="Generate per-sequence table with CD and EPE columns per sequence"
+    )
 
     args = parser.parse_args()
 
@@ -357,6 +563,35 @@ def main():
         print(f"  Max: {df['num_timesteps'].max()}")
         print(f"  Mean: {df['num_timesteps'].mean():.1f}")
         print(f"  Sequences with >= {args.min_timesteps} timesteps: {len(df[df['num_timesteps'] >= args.min_timesteps])}/{len(df)}")
+
+    # Per-sequence table mode
+    if args.per_sequence:
+        if args.methods:
+            df = df[df['method'].isin(args.methods)]
+
+        per_seq_stats, sequences, flat_avgs = compute_per_sequence_stats(df, split=args.split)
+
+        header = generate_per_sequence_header(sequences)
+        footer = generate_per_sequence_footer()
+
+        rows = []
+        for method in sorted(per_seq_stats.keys()):
+            row = format_per_sequence_row(method, per_seq_stats[method], sequences, flat_avgs[method])
+            rows.append(row)
+
+        table = f"{header}\n" + "\n".join(rows) + f"\n{footer}"
+
+        print("\n" + "=" * 80)
+        print("PER-SEQUENCE LATEX TABLE")
+        print("=" * 80)
+        print("\n" + table + "\n")
+
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(table + "\n")
+            print(f"Table saved to: {args.output}")
+
+        return
 
     # Aggregate by method
     print(f"\nAggregating by method (split: {args.split})...")
