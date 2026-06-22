@@ -1,7 +1,7 @@
 # Get sequence path and method from command line arguments
 SEQUENCE_PATH=${1:-"datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2_leaf1"}
 METHOD=${2:-"ode_solve"}
-EPOCHS=15000
+VELO_EPOCH=7000   # iteration at which velocity-network regularizers turn on (paper: 7000/15000)
 echo "Using sequence path: $SEQUENCE_PATH"
 echo "Using method: $METHOD, from options: \"ode_solve\", \"4DSDF\", \"TPSR\", \"NVFI\", \"OF4D\""
 
@@ -35,7 +35,7 @@ else
 fi
 
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $EPOCHS --method $METHOD $SPLIT_ARG
+python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD $SPLIT_ARG
 
 # Wait for filesystem to sync (helps with NFS)
 echo "Training completed. Waiting 10 seconds for filesystem sync..."
