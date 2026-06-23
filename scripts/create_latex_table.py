@@ -575,6 +575,10 @@ def main():
     print(f"Loaded {len(df)} rows")
     print(f"  Methods: {', '.join(df['method'].unique())}")
     print(f"  Sequences: {df['sequence'].nunique()}")
+    if "run" in df.columns:
+        # Metrics are first averaged over runs per (method, sequence), then over sequences
+        n_runs = sorted(df["run"].dropna().unique())
+        print(f"  Runs: {len(n_runs)} ({', '.join(str(int(r)) for r in n_runs)})")
 
     # Show timestep distribution if filtering is requested
     if args.min_timesteps is not None and "num_timesteps" in df.columns:

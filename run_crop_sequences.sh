@@ -1,10 +1,11 @@
 #!/bin/bash
 # Script to run all sequences for a given crop
-# Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split] [sequence1] [sequence2] ...
+# Usage: bash run_crop_sequences.sh <crop_name> [method] [type] [split] [sequence1] [sequence2] ... [--n_runs N]
 # Example: bash run_crop_sequences.sh maize ode_solve leaf test
 # Example: bash run_crop_sequences.sh maize ode_solve leaf test maize_control_plant1_leaf1
 # Example: bash run_crop_sequences.sh maize OF4D leaf test maize_control_plant1_leaf1 maize_control_plant1_leaf2
 # Example: bash run_crop_sequences.sh all OF4D plant test  # Run all plant test sequences across all crops
+# Example: bash run_crop_sequences.sh all 4DSDF plant --n_runs 5  # Repeat every sequence 5 times
 #
 # Arguments:
 #   crop_name: maize, sorghum, tobacco, tomato, all (all runs all crops)
@@ -12,6 +13,9 @@
 #   type: plant, leaf (default: plant)
 #   split: test (default), val, all
 #   sequences: (optional) run only these specific sequences instead of all sequences
+#   --n_runs N: (optional flag, default 1) repeat each sequence N times. Each repeat is stored
+#               in its own experiment dir ("{timestamp}_run{idx}_{name}") so metric aggregation
+#               can average over runs. May appear anywhere in the argument list.
 #
 # Sequences match DOMA val+test splits for fair comparison:
 # - Plant sequences: 12 (4 val + 8 test)
@@ -142,6 +146,34 @@ organ_sequences/tomato/tomato2_control_plant3_leaf7
 organ_sequences/tomato/tomato2_control_plant3_stem
 "
 
+# Parse out the optional "--n_runs N" flag (may appear anywhere in the args).
+# Everything else is kept, in order, as positional arguments.
+N_RUNS=1
+POSITIONAL_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --n_runs)
+            N_RUNS="$2"
+            shift 2
+            ;;
+        --n_runs=*)
+            N_RUNS="${1#*=}"
+            shift
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
+
+# Validate N_RUNS is a positive integer
+if ! [[ "$N_RUNS" =~ ^[0-9]+$ ]] || [ "$N_RUNS" -lt 1 ]; then
+    echo "Error: --n_runs must be a positive integer (got: $N_RUNS)"
+    exit 1
+fi
+
 # Get crop name, method, type, split, and specific sequences from arguments
 CROP=$1
 METHOD=${2:-"ode_solve"}
@@ -168,14 +200,14 @@ if [ "$CROP" == "all" ]; then
     ALL_CROPS="maize sorghum tobacco tomato"
     echo "================================================================="
     echo "Running ${TYPE} sequences for ALL crops: $ALL_CROPS"
-    echo "Using method: $METHOD, split: $SPLIT"
+    echo "Using method: $METHOD, split: $SPLIT, n_runs: $N_RUNS"
     echo "================================================================="
 
     for SINGLE_CROP in $ALL_CROPS; do
         echo ""
         echo ">>> Starting crop: $SINGLE_CROP"
-        # Recursively call this script for each crop
-        bash "$0" "$SINGLE_CROP" "$METHOD" "$TYPE" "$SPLIT" $SPECIFIC_SEQUENCES
+        # Recursively call this script for each crop (propagate --n_runs)
+        bash "$0" "$SINGLE_CROP" "$METHOD" "$TYPE" "$SPLIT" $SPECIFIC_SEQUENCES --n_runs "$N_RUNS"
         EXIT_CODE=$?
         if [ $EXIT_CODE -ne 0 ]; then
             echo ">>> FAILED: $SINGLE_CROP (exit code: $EXIT_CODE)"
@@ -362,7 +394,7 @@ if [ -n "$SPECIFIC_SEQUENCES" ]; then
 else
     echo "Processing ${SPLIT} ${TYPE_NAME} sequences for crop: $CROP"
 fi
-echo "Using method: $METHOD"
+echo "Using method: $METHOD (n_runs: $N_RUNS)"
 echo "================================================================="
 
 # Loop through sequences for this crop
@@ -377,22 +409,32 @@ for SEQUENCE in $SEQUENCES; do
     SEQUENCE_PATH="datasets/Pheno4D/processed/v2/$SEQUENCE"
     SEQUENCE_NAME=$(basename $SEQUENCE)
 
-    echo ""
-    echo "[$COUNTER] Processing: $SEQUENCE_NAME"
-    echo "    Path: $SEQUENCE_PATH"
-    echo "-----------------------------------------------------------------"
+    # Repeat each sequence N_RUNS times; each run lands in its own experiment dir.
+    # For a single run we omit the run tag to preserve the original naming convention.
+    for RUN_IDX in $(seq 1 "$N_RUNS"); do
+        echo ""
+        if [ "$N_RUNS" -gt 1 ]; then
+            echo "[$COUNTER] Processing: $SEQUENCE_NAME (run $RUN_IDX/$N_RUNS)"
+            RUN_ARG="$RUN_IDX"
+        else
+            echo "[$COUNTER] Processing: $SEQUENCE_NAME"
+            RUN_ARG=""
+        fi
+        echo "    Path: $SEQUENCE_PATH"
+        echo "-----------------------------------------------------------------"
 
-    # Run the training and evaluation script
-    # Continue even if this sequence fails (e.g., due to stale file handle)
-    if bash run_train_eval.sh "$SEQUENCE_PATH" "$METHOD"; then
-        echo "-----------------------------------------------------------------"
-        echo "[$COUNTER] Completed: $SEQUENCE_NAME"
-    else
-        EXIT_CODE=$?
-        echo "-----------------------------------------------------------------"
-        echo "[$COUNTER] FAILED: $SEQUENCE_NAME (exit code: $EXIT_CODE)"
-        echo "    Continuing with next sequence..."
-    fi
+        # Run the training and evaluation script
+        # Continue even if this run fails (e.g., due to stale file handle)
+        if bash run_train_eval.sh "$SEQUENCE_PATH" "$METHOD" "$RUN_ARG"; then
+            echo "-----------------------------------------------------------------"
+            echo "[$COUNTER] Completed: $SEQUENCE_NAME (run $RUN_IDX/$N_RUNS)"
+        else
+            EXIT_CODE=$?
+            echo "-----------------------------------------------------------------"
+            echo "[$COUNTER] FAILED: $SEQUENCE_NAME run $RUN_IDX/$N_RUNS (exit code: $EXIT_CODE)"
+            echo "    Continuing with next run/sequence..."
+        fi
+    done
 done
 
 echo ""

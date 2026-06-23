@@ -13,6 +13,7 @@ Examples:
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -221,34 +222,23 @@ def get_max_epoch(result_dir):
     return max(epochs) if epochs else 0
 
 
-def check_sequence_status(method, crop, sequence_name):
+def parse_run_index(experiment_name):
+    """Extract the run index from an experiment folder name.
+
+    Repeated runs are stored as sibling folders named
+    "{timestamp}_run{idx}_{obj_name}". Folders without a run tag (single-run
+    experiments) default to run 1.
     """
-    Check the status of a sequence.
+    match = re.search(r"_run(\d+)_", experiment_name)
+    return int(match.group(1)) if match else 1
 
-    Returns:
-        - "missing": No result directory exists
-        - "only_wandb": Only wandb folder exists
-        - "incomplete": Checkpoints exist but not 15000 epochs
-        - "complete": 15000 epochs reached
-        - (max_epoch, result_dir): For incomplete, return the max epoch and path
+
+def check_run_dir_status(run_dir):
+    """Check completeness of a single experiment folder.
+
+    Returns (status, max_epoch) where status is "only_wandb", "incomplete" or
+    "complete".
     """
-    results_base = Path("results/pheno4d")
-    sequence_dir = results_base / method / crop / sequence_name
-
-    # Check if sequence directory exists
-    if not sequence_dir.exists():
-        return "missing", 0, None
-
-    # Find all run directories (timestamped subdirectories)
-    run_dirs = [d for d in sequence_dir.iterdir() if d.is_dir()]
-
-    if not run_dirs:
-        return "missing", 0, None
-
-    # Check the most recent run directory
-    run_dir = max(run_dirs, key=lambda d: d.name)
-
-    # Check what exists in the run directory
     has_wandb = (run_dir / "wandb").exists()
     has_checkpoints = (run_dir / "checkpoints").exists()
     has_metrics = (run_dir / "metrics").exists()
@@ -256,23 +246,93 @@ def check_sequence_status(method, crop, sequence_name):
 
     # If only wandb exists
     if has_wandb and not has_checkpoints and not has_metrics and not has_meshes:
-        return "only_wandb", 0, run_dir
+        return "only_wandb", 0
 
-    # Check max epoch
     max_epoch = get_max_epoch(run_dir)
 
     if max_epoch >= 15000:
-        return "complete", max_epoch, run_dir
-    else:
-        return "incomplete", max_epoch, run_dir
+        return "complete", max_epoch
+    return "incomplete", max_epoch
 
 
-def check_crop_sequences(method, crop, seq_type, split, return_data=False):
+def check_sequence_status(method, crop, sequence_name, n_runs=1):
+    """
+    Check the status of a sequence (optionally across multiple runs).
+
+    With n_runs > 1, repeated runs are stored as sibling folders tagged
+    "_run{idx}_". The sequence is only "complete" when every expected run
+    (run 1 .. run n_runs) is present and complete; otherwise the missing or
+    incomplete runs are reported.
+
+    Returns:
+        (status, max_epoch, run_dir, runs_detail)
+        - status: "missing" | "only_wandb" | "incomplete" | "complete"
+        - max_epoch: max epoch of the representative run dir (0 if N/A)
+        - run_dir: representative run dir (latest), or None
+        - runs_detail: list of (run_idx, status, max_epoch, run_dir) for
+          n_runs > 1 (empty list for the single-run case)
+    """
+    results_base = Path("results/pheno4d")
+    sequence_dir = results_base / method / crop / sequence_name
+
+    # Check if sequence directory exists
+    if not sequence_dir.exists():
+        return "missing", 0, None, []
+
+    # Find all experiment folders (timestamped subdirectories)
+    run_dirs = [d for d in sequence_dir.iterdir() if d.is_dir()]
+
+    if not run_dirs:
+        return "missing", 0, None, []
+
+    # Single-run (default): keep backward-compatible behaviour and check the
+    # most recent folder overall.
+    if n_runs <= 1:
+        run_dir = max(run_dirs, key=lambda d: d.name)
+        status, max_epoch = check_run_dir_status(run_dir)
+        return status, max_epoch, run_dir, []
+
+    # Multi-run: group folders by run index, keep the latest per run index.
+    latest_by_run = {}
+    for d in run_dirs:
+        idx = parse_run_index(d.name)
+        if idx not in latest_by_run or d.name > latest_by_run[idx].name:
+            latest_by_run[idx] = d
+
+    runs_detail = []
+    all_complete = True
+    any_present = False
+    for idx in range(1, n_runs + 1):
+        run_dir = latest_by_run.get(idx)
+        if run_dir is None:
+            runs_detail.append((idx, "missing", 0, None))
+            all_complete = False
+            continue
+        any_present = True
+        status, max_epoch = check_run_dir_status(run_dir)
+        runs_detail.append((idx, status, max_epoch, run_dir))
+        if status != "complete":
+            all_complete = False
+
+    representative = latest_by_run.get(n_runs) or (
+        max(run_dirs, key=lambda d: d.name) if run_dirs else None
+    )
+
+    if all_complete:
+        return "complete", 15000, representative, runs_detail
+    if not any_present:
+        return "missing", 0, None, runs_detail
+    return "incomplete", 0, representative, runs_detail
+
+
+def check_crop_sequences(method, crop, seq_type, split, return_data=False, n_runs=1):
     """
     Check all sequences for a given crop and type.
 
     Args:
         return_data: If True, return data instead of printing (for "all" crops mode)
+        n_runs: Expected number of runs per sequence. With n_runs > 1, a sequence
+            is only complete when runs run_1 .. run_n_runs are all complete.
 
     Returns:
         If return_data=True: dict with sequences info, else None
@@ -302,8 +362,9 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
         return
 
     print(f"\n{'='*80}")
+    runs_note = f", expecting {n_runs} runs/sequence" if n_runs > 1 else ""
     print(
-        f"Checking {method} results for {crop} {type_name} sequences (split: {split})"
+        f"Checking {method} results for {crop} {type_name} sequences (split: {split}{runs_note})"
     )
     print(f"{'='*80}\n")
 
@@ -313,14 +374,16 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
     complete = []
 
     for sequence in sequences:
-        status, max_epoch, run_dir = check_sequence_status(method, crop, sequence)
+        status, max_epoch, run_dir, runs_detail = check_sequence_status(
+            method, crop, sequence, n_runs=n_runs
+        )
 
         if status == "missing":
             missing.append(sequence)
         elif status == "only_wandb":
             only_wandb.append((sequence, run_dir))
         elif status == "incomplete":
-            incomplete.append((sequence, max_epoch, run_dir))
+            incomplete.append((sequence, max_epoch, run_dir, runs_detail))
         elif status == "complete":
             complete.append(sequence)
 
@@ -360,9 +423,21 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
     if incomplete:
         print(f"\nIncomplete training ({len(incomplete)}):")
         print("-" * 80)
-        for seq, max_epoch, run_dir in incomplete:
-            print(f"  - {seq} (max epoch: {max_epoch})")
-            print(f"    Path: {run_dir}")
+        for seq, max_epoch, run_dir, runs_detail in incomplete:
+            if runs_detail:
+                # Multi-run: show per-run breakdown
+                done = sum(1 for _, st, _, _ in runs_detail if st == "complete")
+                print(f"  - {seq} ({done}/{n_runs} runs complete)")
+                for idx, st, ep, rdir in runs_detail:
+                    if st == "complete":
+                        continue
+                    if st == "missing":
+                        print(f"      run {idx}: MISSING")
+                    else:
+                        print(f"      run {idx}: {st} (max epoch: {ep}) -> {rdir}")
+            else:
+                print(f"  - {seq} (max epoch: {max_epoch})")
+                print(f"    Path: {run_dir}")
             to_rerun.append(seq)
 
     # Check for sequences affected by split bug (need to be rerun even if complete)
@@ -372,7 +447,9 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
             # Check if already in to_rerun (missing/incomplete)
             if seq not in to_rerun:
                 # Check if it has been trained
-                status, max_epoch, run_dir = check_sequence_status(method, crop, seq)
+                status, max_epoch, run_dir, _ = check_sequence_status(
+                    method, crop, seq, n_runs=n_runs
+                )
                 if status == "complete":
                     split_bug_sequences.append((seq, run_dir))
                     to_rerun.append(seq)
@@ -400,6 +477,8 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
 
     # Generate commands to rerun
     if to_rerun:
+        # Append the run count so reruns reproduce the expected number of runs
+        runs_flag = f" --n_runs {n_runs}" if n_runs > 1 else ""
         # Filter out sequences with very few timepoints from commands
         few_timepoint_filtered = [seq for seq in to_rerun if seq in FEW_TIMEPOINT_SEQUENCES]
         to_rerun_filtered = [seq for seq in to_rerun if seq not in FEW_TIMEPOINT_SEQUENCES]
@@ -430,7 +509,7 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
             # Single job if few sequences
             sequences_str = " ".join(to_rerun_filtered)
             print(
-                f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+                f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
             )
         else:
             # Multiple jobs
@@ -440,20 +519,20 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
                 job_num = i // sequences_per_job + 1
                 print(f"# Job {job_num} ({len(job_sequences)} sequences)")
                 print(
-                    f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+                    f"sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
                 )
                 print()
 
         print(f"# Or run all in one job:")
         sequences_str = " ".join(to_rerun_filtered)
         print(
-            f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}"
+            f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
         )
 
         print(f"\n# Or run them individually:")
         for seq in to_rerun_filtered:
             print(
-                f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}"
+                f"# sbatch -S es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}{runs_flag}"
             )
     else:
         print(f"\nAll sequences are complete!")
@@ -461,16 +540,19 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False):
     print()
 
 
-def check_all_crops_mixed(method, seq_type, split):
+def check_all_crops_mixed(method, seq_type, split, n_runs=1):
     """
     Check all crops and mix sequences for balanced job distribution.
     """
     all_crops = ["maize", "sorghum", "tobacco", "tomato"]
+    runs_flag = f" --n_runs {n_runs}" if n_runs > 1 else ""
 
     # Collect data from all crops
     crop_data = []
     for crop in all_crops:
-        data = check_crop_sequences(method, crop, seq_type, split, return_data=True)
+        data = check_crop_sequences(
+            method, crop, seq_type, split, return_data=True, n_runs=n_runs
+        )
         if data and data["to_rerun"]:
             crop_data.append(data)
 
@@ -552,7 +634,7 @@ def check_all_crops_mixed(method, seq_type, split):
         for crop in sorted(crop_groups.keys()):
             seqs = crop_groups[crop]
             sequences_str = " ".join(seqs)
-            print(f"sbatch -A es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
+            print(f"sbatch -A es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}")
 
         print()
 
@@ -567,29 +649,52 @@ def check_all_crops_mixed(method, seq_type, split):
     for crop in sorted(crop_all_seqs.keys()):
         seqs = crop_all_seqs[crop]
         sequences_str = " ".join(seqs)
-        print(f"# sbatch -A es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}")
+        print(f"# sbatch -A es_tang run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}")
 
     print()
 
 
 def main():
-    if len(sys.argv) < 4:
-        print("Usage: python check_missing_results.py <method> <crop> <type> [split]")
+    # Pull the optional "--n_runs N" flag out of argv (may appear anywhere),
+    # leaving the positional arguments untouched.
+    argv = sys.argv[1:]
+    n_runs = 1
+    positional = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--n_runs":
+            n_runs = int(argv[i + 1])
+            i += 2
+        elif argv[i].startswith("--n_runs="):
+            n_runs = int(argv[i].split("=", 1)[1])
+            i += 1
+        else:
+            positional.append(argv[i])
+            i += 1
+
+    if len(positional) < 3:
+        print("Usage: python check_missing_results.py <method> <crop> <type> [split] [--n_runs N]")
         print("\nExamples:")
         print("  python check_missing_results.py OF4D maize leaf")
         print("  python check_missing_results.py OF4D maize leaf test")
         print("  python check_missing_results.py NVFI sorghum plant val")
         print("  python check_missing_results.py TPSR all leaf test")
+        print("  python check_missing_results.py 4DSDF all plant test --n_runs 5")
         print("\nAvailable methods: OF4D, NVFI, TPSR, 4DSDF, ode_solve")
         print("Available crops: maize, sorghum, tobacco, tomato, all")
         print("Available types: plant, leaf")
         print("Available splits: test (default), val, all")
+        print("--n_runs N: expected number of runs per sequence (default 1)")
         sys.exit(1)
 
-    method = sys.argv[1]
-    crop = sys.argv[2]
-    seq_type = sys.argv[3] if len(sys.argv) > 3 else "plant"
-    split = sys.argv[4] if len(sys.argv) > 4 else "test"
+    method = positional[0]
+    crop = positional[1]
+    seq_type = positional[2] if len(positional) > 2 else "plant"
+    split = positional[3] if len(positional) > 3 else "test"
+
+    if n_runs < 1:
+        print(f"Error: --n_runs must be a positive integer (got {n_runs})")
+        sys.exit(1)
 
     # Validate inputs
     if seq_type not in ["plant", "leaf"]:
@@ -602,7 +707,7 @@ def main():
 
     # Handle "all" crops
     if crop == "all":
-        check_all_crops_mixed(method, seq_type, split)
+        check_all_crops_mixed(method, seq_type, split, n_runs=n_runs)
     else:
         # Validate crop
         sequences_dict = (
@@ -614,7 +719,7 @@ def main():
             )
             sys.exit(1)
 
-        check_crop_sequences(method, crop, seq_type, split)
+        check_crop_sequences(method, crop, seq_type, split, n_runs=n_runs)
 
 
 if __name__ == "__main__":

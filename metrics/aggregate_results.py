@@ -11,6 +11,7 @@ This script collects metrics from all experiments and outputs:
 import argparse
 import json
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -18,28 +19,50 @@ import numpy as np
 import pandas as pd
 
 
+def parse_run_index(experiment_name):
+    """Extract the run index from an experiment name.
+
+    Experiment names produced for repeated runs look like
+    "{timestamp}_run{idx}_{obj_name}" (e.g. "20260623_120000_run2_..."). Names
+    without a run tag (single-run experiments) default to run 1.
+
+    Args:
+        experiment_name: Experiment directory name
+
+    Returns:
+        Integer run index (>= 1)
+    """
+    match = re.search(r"_run(\d+)_", experiment_name)
+    if match:
+        return int(match.group(1))
+    return 1
+
+
 def deduplicate_to_latest_experiments(results):
     """
-    Keep only the latest experiment for each method-sequence combination.
+    Keep only the latest experiment for each method-sequence-run combination.
 
-    When multiple experiments exist for the same method and sequence,
+    When multiple experiments exist for the same method, sequence and run index,
     selects the one with the latest timestamp (extracted from experiment name).
+    Different run indices are kept separately so that repeated runs (e.g. launched
+    with --n_runs) survive into the aggregated table and can be averaged over.
 
     Args:
         results: List of result dictionaries
 
     Returns:
-        List of deduplicated results (latest experiment per method-sequence)
+        List of deduplicated results (latest experiment per method-sequence-run)
     """
     from collections import defaultdict
 
-    # Group by (method, sequence, split)
+    # Group by (method, sequence, split, run)
     grouped = defaultdict(list)
     for result in results:
         method = result.get("method", "unknown")
         sequence = result.get("sequence", "unknown")
         split = result.get("split", "all")
-        key = (method, sequence, split)
+        run = result.get("run", 1)
+        key = (method, sequence, split, run)
         grouped[key].append(result)
 
     # For each group, keep only the latest experiment
@@ -214,6 +237,9 @@ def collect_metrics_from_experiments(
             else:
                 experiment_timestamp = None
 
+            # Extract run index ("..._run{idx}_..."); single-run experiments default to 1
+            run_idx = parse_run_index(experiment_name)
+
             # Apply experiment type filter
             is_interp = "_interp_stride_" in experiment_name
 
@@ -230,6 +256,7 @@ def collect_metrics_from_experiments(
                     "method": method,
                     "crop": crop,
                     "sequence": sequence,
+                    "run": run_idx,
                     "num_epochs": data.get("num_epochs_evaluated", 0),
                     "best_epoch": data.get("best_epoch_by_chamfer", None),
                     "experiment_timestamp": experiment_timestamp,
@@ -249,6 +276,7 @@ def collect_metrics_from_experiments(
                             "method": method,
                             "crop": crop,
                             "sequence": sequence,
+                            "run": run_idx,
                             "split": "train",
                             "epoch": data.get("epoch", None),
                             "mean_cd": data["train"].get("mean_chamfer_distance", None),
@@ -277,6 +305,7 @@ def collect_metrics_from_experiments(
                             "method": method,
                             "crop": crop,
                             "sequence": sequence,
+                            "run": run_idx,
                             "split": "test",
                             "epoch": data.get("epoch", None),
                             "mean_cd": data["test"].get("mean_chamfer_distance", None),
@@ -304,6 +333,7 @@ def collect_metrics_from_experiments(
                         "method": method,
                         "crop": crop,
                         "sequence": sequence,
+                        "run": run_idx,
                         "split": "all",
                         "epoch": data.get("epoch", None),
                         "mean_cd": data.get("mean_chamfer_distance", None),

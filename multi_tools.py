@@ -121,6 +121,17 @@ def build_args():
         + "E.g., --interp_stride 2 trains on positions 0,2,4,... and tests on 1,3,5,... "
         + "(only for pheno4d dataset)",
     )
+    arg_parser.add_argument(
+        "--run_idx",
+        dest="run_idx",
+        type=int,
+        default=None,
+        required=False,
+        help="Optional run index (1-indexed) for repeated runs of the same sequence. "
+        + "When set, the experiment directory is named "
+        + "'{timestamp}_run{run_idx}_{obj_name}', keeping repeated runs separate so "
+        + "metric aggregation can average over runs.",
+    )
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
 

@@ -26,10 +26,12 @@ nvidia-smi
 #bash run_train_eval.sh $1
 
 
-# Run crop sequences with crop name and optional method, type, split, and specific sequences
-# Usage: sbatch run_euler_24GB.sh <crop_name> [method] [type] [split] [sequence1] [sequence2] ...
+# Run crop sequences with crop name and optional method, type, split, and specific sequences.
+# Repeat runs are controlled by the optional "--n_runs N" flag (default 1), which may appear
+# anywhere in the arguments (it is not positional, so it never collides with sequence names).
+# Usage: sbatch run_euler_24GB.sh <crop_name> [method] [type] [split] [sequence1] [sequence2] ... [--n_runs N]
 # Example: sbatch run_euler_24GB.sh maize ode_solve plant test
-# Example: sbatch run_euler_24GB.sh maize ode_solve leaf test
 # Example: sbatch run_euler_24GB.sh maize ode_solve leaf test maize_control_plant1_leaf1
-# Example: sbatch run_euler_24GB.sh maize NVFI leaf test seq1 seq2 seq3
+# Example: sbatch run_euler_24GB.sh all 4DSDF plant --n_runs 5
+# Example: sbatch run_euler_24GB.sh maize NVFI leaf test maize_control_plant2_leaf5 maize_control_plant2_stem --n_runs 5
 bash run_crop_sequences.sh "$@"

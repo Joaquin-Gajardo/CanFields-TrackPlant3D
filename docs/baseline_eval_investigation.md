@@ -196,29 +196,38 @@ So today, turning the velocity regularizer **on** for the baselines is only safe
 ode_solve (and OF4D). NVFI would silently penalize the wrong derivatives, and TPSR
 would index a non-existent 4th column.
 
-### Modifications we *could* still make
+### Modifications
 
-1. **Fix NVFI ordering** (`networks/other_volocities.py:180`): the
-   `torch.cat((derivs[:, 1:], derivs[:, :1]), dim=1)` reshuffle puts time **last**.
-   To feed `comput_kL_L2` correctly the Jacobian must be `[∂t,∂x,∂y,∂z]` (time first).
-   Either remove/replace that reorder so time stays in column 0, or adapt the consumer.
-   Only needed if NVFI is retrained with `-ev` enabled.
+1. **NVFI ordering — FIXED** (`networks/other_volocities.py`, `VelocityAABBSur.forward`).
+   Input `xt = [x, y, z, t]`, so `df` returns `[∂x,∂y,∂z,∂t]`. The old reorder
+   `torch.cat((derivs[:, 1:], derivs[:, :1]), dim=1)` produced `[∂y,∂z,∂t,∂x]` (wrong).
+   Replaced with `torch.cat((derivs[:, -1:], derivs[:, :-1]), dim=1)` → `[∂t,∂x,∂y,∂z]`,
+   matching what `comput_kL_L2` expects. NVFI is genuinely time-dependent, so ∂t is real.
 
-2. **Fix TPSR Jacobian** (3-column → 4-column): TPSR's state is 3D and `return_grads`
-   yields `[N,3,3]` (`other_volocities.py:291-296`), so `comput_kL_L2`'s references to
-   column 3 (Dirichlet/Killing) would crash. Would need either a time column added or a
-   TPSR-specific regularizer path. Only needed if TPSR is retrained with `-ev` enabled.
+2. **TPSR Jacobian (3-col → 4-col) — FIXED** (`networks/other_volocities.py`,
+   `TPSR.forward`). TPSR's state is 3D with no explicit time input (autonomous field),
+   so its grads were `[N,3,3]` and crashed `comput_kL_L2` (index 3 out of range +
+   shape-mismatch add). We now prepend a **zero** time column → `[N,3,4]` =
+   `[0, ∂x, ∂y, ∂z]`. ∂v/∂t ≡ 0 is mathematically correct for an autonomous field, so the
+   acceleration term is a true zero and the Killing/Dirichlet terms use the real spatial
+   3×3 Jacobian. Verified numerically (both nets now emit `[N,3,4]` and pass through
+   `comput_kL_L2` without error).
 
-3. **Optional ramp-denominator fidelity tweak** (`multi_tools.py:825/828/831` for
-   ode_solve): the paper ramps over ~5,000 iters then holds; with `epoch_velo=7000`
+   > 4DSDF needs no change: it uses `id_flag=True`, the ODE func is never called,
+   > `return_grads()` stays empty, and `comput_kL_L2` returns zeros (correct no-op).
+
+3. **Optional ramp-denominator fidelity tweak (NOT done)** (`multi_tools.py:825/828/831`
+   for ode_solve): the paper ramps over ~5,000 iters then holds; with `epoch_velo=7000`
    that means reaching full strength by iteration 12,000. The code currently divides by
    `20000 - epoch_velo = 13000`, so it never fully reaches the target weight within the
    15,001-iter budget. Changing `20000` → `12000` would make ode_solve match the paper's
-   "ramp over 5k, hold last 3k" schedule. (The baseline trainer divides by
-   `num_epochs - epoch_velo`, a different choice; align if desired.)
+   "ramp over 5k, hold last 3k" schedule. (The baseline trainer `Trainer_woadjust` divides
+   by `num_epochs - epoch_velo`, a different choice; align if desired.)
 
-> These are **only** relevant if you decide to retrain the baselines with the velocity
-> regularizers active. They have no effect on the re-evaluation of existing checkpoints.
+> Items 1–2 are applied and only take effect when the baselines are **retrained** with
+> `-ev` enabled (e.g. `-ev 7000`); they have no effect on re-evaluating existing
+> checkpoints. The velocity regularizers were off (or crashing) for the stored NVFI/TPSR
+> runs, so retraining is required to benefit from them.
 
 ---
 

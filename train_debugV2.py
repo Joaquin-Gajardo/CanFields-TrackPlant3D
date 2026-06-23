@@ -90,6 +90,10 @@ def velocity_test():
     # Extract base method name (remove _woAdaptor suffix if present) for directory naming and wandb
     base_method = args.methods.replace("_woAdaptor", "")
 
+    # Optional run tag for repeated runs of the same sequence (e.g. "run2_")
+    # Kept right after the timestamp so the experiment name stays "{timestamp}_run{idx}_{obj_name}".
+    run_tag = f"run{args.run_idx}_" if getattr(args, "run_idx", None) else ""
+
     # Extract crop and sequence name from object_name path
     # For pheno4d: Pheno4D/processed/v2/organ_sequences/tomato/name -> crop=tomato, name=name
     # For others: use object_name as-is for backwards compatibility
@@ -99,7 +103,7 @@ def velocity_test():
         sequence_name = path_parts[-1]  # Extract sequence name
         object_name = sequence_name  # For wandb logging
         # Build path: results/pheno4d/{method}/{crop}/{sequence_name}/{timestamp}_{experiment_name}/
-        timestamped_exp_name = f"{timestamp}_{obj_name}"
+        timestamped_exp_name = f"{timestamp}_{run_tag}{obj_name}"
         experiment_directory = os.path.join(
             args.base_results_dir,
             args.dataset_name,
@@ -111,7 +115,7 @@ def velocity_test():
     else:
         # Original structure for other datasets
         object_name = args.object_name.split("/")[-1]
-        timestamped_exp_name = f"{timestamp}_{obj_name}"
+        timestamped_exp_name = f"{timestamp}_{run_tag}{obj_name}"
         experiment_directory = os.path.join(
             args.base_results_dir,
             args.dataset_name,
