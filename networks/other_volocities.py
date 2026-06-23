@@ -64,7 +64,11 @@ class TPSR(nn.Module):
             for o in range(3):
                 derivs = self.df(dyns_x_t[:,o],cxyz)
                 total_dxyz_dxyz.append(derivs.unsqueeze(1))
-            total_dxyz_dxyz = torch.cat(total_dxyz_dxyz,dim=1)
+            total_dxyz_dxyz = torch.cat(total_dxyz_dxyz,dim=1)  # [N, 3, 3]: spatial Jacobian [dx, dy, dz]
+            # TPSR's dynamics are autonomous (no explicit time input), so dv/dt = 0.
+            # Prepend a zero time column so comput_kL_L2 receives [dt, dx, dy, dz].
+            zeros_t = torch.zeros_like(total_dxyz_dxyz[:, :, :1])
+            total_dxyz_dxyz = torch.cat([zeros_t, total_dxyz_dxyz], dim=2)
             self.grads.append(total_dxyz_dxyz)
         self.nfe+=1
         return dyns_x_t
@@ -177,7 +181,10 @@ class VelocityAABBSur(nn.Module):
             total_dxyz_dxyz=[]
             for o in range(3):
                 derivs = self.df(vel[:,o],xt)
-                derivs= torch.cat((derivs[:, 1:], derivs[:, :1]), dim=1)#.clone()
+                # xt is ordered [x, y, z, t], so df returns [dx, dy, dz, dt].
+                # comput_kL_L2 expects [dt, dx, dy, dz] (time first, then spatial),
+                # so move the time column to the front.
+                derivs = torch.cat((derivs[:, -1:], derivs[:, :-1]), dim=1)
                 total_dxyz_dxyz.append(derivs.unsqueeze(1))
             total_dxyz_dxyz = torch.cat(total_dxyz_dxyz,dim=1)
             self.grads.append(total_dxyz_dxyz)
