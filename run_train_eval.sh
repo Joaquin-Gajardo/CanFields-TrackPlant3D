@@ -3,8 +3,15 @@ SEQUENCE_PATH=${1:-"datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2
 METHOD=${2:-"ode_solve"}
 RUN_IDX=${3:-""}  # Optional 1-indexed run number for repeated runs of the same sequence
 VELO_EPOCH=7000   # iteration at which velocity-network regularizers turn on (paper: 7000/15000)
+
+# Base directory where all results are written. Defaults to cluster scratch but can be
+# overridden via the BASE_RESULTS_DIR env var (e.g. BASE_RESULTS_DIR=results for local runs).
+BASE_RESULTS_DIR="${BASE_RESULTS_DIR:-/cluster/scratch/jgajardo/canfields}"
+mkdir -p "$BASE_RESULTS_DIR"
+
 echo "Using sequence path: $SEQUENCE_PATH"
 echo "Using method: $METHOD, from options: \"ode_solve\", \"4DSDF\", \"TPSR\", \"NVFI\", \"OF4D\""
+echo "Using base results dir: $BASE_RESULTS_DIR"
 
 # Build optional --run_idx argument so repeated runs land in separate experiment dirs
 if [ -n "$RUN_IDX" ]; then
@@ -44,7 +51,7 @@ else
 fi
 
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD $SPLIT_ARG $RUN_ARG
+python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD --base_results_dir $BASE_RESULTS_DIR $SPLIT_ARG $RUN_ARG
 
 # Wait for filesystem to sync (helps with NFS)
 echo "Training completed. Waiting 10 seconds for filesystem sync..."
@@ -52,8 +59,8 @@ sync
 sleep 10
 
 # Get the latest experiment directory
-# New path: results/pheno4d/{method}/{crop}/{sequence_name}/
-EXPERIMENT_DIR="results/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
+# Path: $BASE_RESULTS_DIR/pheno4d/{method}/{crop}/{sequence_name}/
+EXPERIMENT_DIR="$BASE_RESULTS_DIR/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
 if [ ! -d "$EXPERIMENT_DIR" ]; then
     echo "ERROR: Experiment directory not found: $EXPERIMENT_DIR"
     echo "Training may have failed. Skipping evaluation."
@@ -70,10 +77,10 @@ fi
 echo "Found experiment: $EXPERIMENT_NAME"
 
 # Eval: create canonical shape
-python eval_sphere.py -d pheno4d -e all -s 1 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD
+python eval_sphere.py -d pheno4d -e all -s 1 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD --base_results_dir $BASE_RESULTS_DIR
 
 # Eval: deform canonical shape
-python eval_sphere.py -d pheno4d -e all -s 2 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD
+python eval_sphere.py -d pheno4d -e all -s 2 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD --base_results_dir $BASE_RESULTS_DIR
 
 # Eval: compute metrics (Chamfer Distance and EPE) with point splits
-python eval_metrics.py -d pheno4d -e all -o $SEQUENCE_PATH --experiment_name $EXPERIMENT_NAME --methods $METHOD $SPLIT_ARG
+python eval_metrics.py -d pheno4d -e all -o $SEQUENCE_PATH --experiment_name $EXPERIMENT_NAME --methods $METHOD $SPLIT_ARG --base_results_dir $BASE_RESULTS_DIR

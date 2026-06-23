@@ -13,9 +13,18 @@ Examples:
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+# Base directory where results live. Mirrors run_train_eval.sh: defaults to cluster
+# scratch but can be overridden via the BASE_RESULTS_DIR env var (e.g.
+# BASE_RESULTS_DIR=results for local runs).
+RESULTS_BASE = (
+    Path(os.environ.get("BASE_RESULTS_DIR", "/cluster/scratch/jgajardo/canfields"))
+    / "pheno4d"
+)
 
 # Sequences that need to be rerun due to split bug fix (Nov 2025)
 # These had incorrect train/test splits because of timepoint mismatch
@@ -272,8 +281,7 @@ def check_sequence_status(method, crop, sequence_name, n_runs=1):
         - runs_detail: list of (run_idx, status, max_epoch, run_dir) for
           n_runs > 1 (empty list for the single-run case)
     """
-    results_base = Path("results/pheno4d")
-    sequence_dir = results_base / method / crop / sequence_name
+    sequence_dir = RESULTS_BASE / method / crop / sequence_name
 
     # Check if sequence directory exists
     if not sequence_dir.exists():

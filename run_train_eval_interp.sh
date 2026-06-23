@@ -9,11 +9,17 @@ METHOD=${2:-"OF4D"}
 INTERP_STRIDE=${3:-2}
 EPOCHS=15000
 
+# Base directory where all results are written. Defaults to cluster scratch but can be
+# overridden via the BASE_RESULTS_DIR env var (e.g. BASE_RESULTS_DIR=results for local runs).
+BASE_RESULTS_DIR="${BASE_RESULTS_DIR:-/cluster/scratch/jgajardo/canfields}"
+mkdir -p "$BASE_RESULTS_DIR"
+
 echo "================================================================="
 echo "INTERPOLATION EXPERIMENT"
 echo "================================================================="
 echo "Using sequence path: $SEQUENCE_PATH"
 echo "Using method: $METHOD, from options: \"ode_solve\", \"4DSDF\", \"TPSR\", \"NVFI\", \"OF4D\""
+echo "Using base results dir: $BASE_RESULTS_DIR"
 echo "Interpolation stride: $INTERP_STRIDE (train on positions 0,${INTERP_STRIDE},...)}"
 echo ""
 
@@ -65,6 +71,7 @@ python train_debugV2.py \
     -ev $EPOCHS \
     --method $METHOD \
     --interp_stride $INTERP_STRIDE \
+    --base_results_dir $BASE_RESULTS_DIR \
     $SPLIT_ARG
 
 # Check if training succeeded
@@ -79,8 +86,8 @@ sync
 sleep 10
 
 # Get the latest experiment directory
-# New path: results/pheno4d/{method}/{crop}/{sequence_name}/
-EXPERIMENT_DIR="results/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
+# Path: $BASE_RESULTS_DIR/pheno4d/{method}/{crop}/{sequence_name}/
+EXPERIMENT_DIR="$BASE_RESULTS_DIR/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
 if [ ! -d "$EXPERIMENT_DIR" ]; then
     echo "ERROR: Experiment directory not found: $EXPERIMENT_DIR"
     echo "Training may have failed. Skipping evaluation."
@@ -123,7 +130,8 @@ python eval_sphere.py \
     -o $SEQUENCE_PATH \
     -m False \
     --experiment_name $EXPERIMENT_NAME \
-    --method $METHOD
+    --method $METHOD \
+    --base_results_dir $BASE_RESULTS_DIR
 
 # Eval: deform canonical shape (only for TEST timesteps)
 echo ""
@@ -135,7 +143,8 @@ python eval_sphere.py \
     -o $SEQUENCE_PATH \
     -m False \
     --experiment_name $EXPERIMENT_NAME \
-    --method $METHOD
+    --method $METHOD \
+    --base_results_dir $BASE_RESULTS_DIR
 
 # Eval: compute metrics (Chamfer Distance and EPE) with point splits (only for TEST timesteps)
 echo ""
@@ -146,6 +155,7 @@ python eval_metrics.py \
     -o $SEQUENCE_PATH \
     --experiment_name $EXPERIMENT_NAME \
     --methods $METHOD \
+    --base_results_dir $BASE_RESULTS_DIR \
     $SPLIT_ARG
 
 echo ""
