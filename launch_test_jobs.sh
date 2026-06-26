@@ -28,7 +28,7 @@ N_RUNS=5
 TYPE_SEL="both"          # plant | leaf | both
 DRY_RUN=false
 SPLITS_JSON="configs/data_splits.json"
-SBATCH_SCRIPT="run_euler_24GB.sh"
+SBATCH_SCRIPT="${SBATCH_SCRIPT:-run_euler_24GB.sh}"
 SPLIT="test"
 
 # Organ sequences that are too short to be worth running.
