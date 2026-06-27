@@ -407,7 +407,13 @@ def filter_by_data_split(results, split_type, splits_config):
         print(f"Warning: Split type '{split_type}' not found in config")
         return results
 
-    split_sequences = set(splits_config[split_type])
+    split_def = splits_config[split_type]
+    # data_splits.json nests entries as {"plants": [...], "sequences": [...]}.
+    # Flatten so both whole-plant and organ sequence names are matchable.
+    if isinstance(split_def, dict):
+        split_sequences = set(split_def.get("plants", []) + split_def.get("sequences", []))
+    else:
+        split_sequences = set(split_def)
     filtered_results = []
 
     for result in results:
@@ -752,8 +758,12 @@ def main():
         results = [r for r in results if r.get("split") == split_filter]
         print(f"Filtered to {len(results)} {split_filter} point split experiments")
 
-    # Note: The --split argument handles data splits (val/test sequences)
-    # via filter_by_data_split which is currently unused but kept for compatibility
+    # Restrict to the sequences belonging to this data split (val/test) -- e.g. the
+    # 8 test plants and their organs -- so non-test sequences don't leak into the table.
+    if args.split in ["val", "test"] and splits_config is not None:
+        before = len(results)
+        results = filter_by_data_split(results, args.split, splits_config)
+        print(f"Filtered to {len(results)} results in '{args.split}' data split (was {before})")
 
     # Filter by sequence type if requested
     if args.filter:
