@@ -715,7 +715,7 @@ def main():
     parser.add_argument(
         "--experiment_type",
         choices=["interp", "interpolation", "regular", "standard"],
-        default=None,
+        default="regular",
         help="Filter by experiment type: 'interp'/'interpolation' for interpolation experiments, 'regular'/'standard' for standard experiments",
     )
 
