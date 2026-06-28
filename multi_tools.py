@@ -132,6 +132,16 @@ def build_args():
         + "'{timestamp}_run{run_idx}_{obj_name}', keeping repeated runs separate so "
         + "metric aggregation can average over runs.",
     )
+    arg_parser.add_argument(
+        "--seed",
+        dest="seed",
+        type=int,
+        default=None,
+        required=False,
+        help="Random seed. If unset, defaults to 3407 + (run_idx or 0) so that "
+        + "repeated runs (--run_idx) automatically sweep different seeds, giving a "
+        + "meaningful mean +/- std over runs across all methods.",
+    )
     add_common_args(arg_parser)
     args = arg_parser.parse_args()
 

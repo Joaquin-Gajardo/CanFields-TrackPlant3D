@@ -30,6 +30,14 @@ set_most_idle_gpu_as_visible()
 def velocity_test():
     args = build_args()
 
+    # Seed: explicit --seed wins, otherwise 3407 + run_idx so that repeated runs
+    # (--run_idx / --n_runs) automatically use different seeds. This gives a
+    # meaningful mean +/- std over runs for every method (deterministic baselines
+    # included), instead of identical repeated runs under a single fixed seed.
+    seed = args.seed if args.seed is not None else 3407 + (args.run_idx or 0)
+    setup_seed(seed)
+    logging.info(f"Using random seed: {seed}")
+
     def signal_handler(sig, frame):
         logging.info("Stopping early...")
         sys.exit(0)
@@ -247,5 +255,4 @@ def velocity_test():
 
 
 if __name__ == "__main__":
-    setup_seed(3407)
     velocity_test()
