@@ -578,6 +578,14 @@ def main():
         action="store_true",
         help="Generate per-sequence table with CD and EPE columns per sequence",
     )
+    parser.add_argument(
+        "--no_std",
+        action="store_true",
+        help="In the per-sequence table, do not append the \\std{x} (std over runs) "
+        "to each cell, even when multiple runs are present. Useful when the runs "
+        "share a fixed seed, so the across-run std is not a meaningful robustness "
+        "measure (report the mean only).",
+    )
 
     args = parser.parse_args()
 
@@ -629,7 +637,9 @@ def main():
             compute_per_sequence_stats(df, split=args.split)
         )
 
-        header = generate_per_sequence_header(sequences, show_std=has_multiple_runs)
+        show_std = has_multiple_runs and not args.no_std
+
+        header = generate_per_sequence_header(sequences, show_std=show_std)
         footer = generate_per_sequence_footer()
 
         rows = []
@@ -639,7 +649,7 @@ def main():
                 per_seq_stats[method],
                 sequences,
                 flat_avgs[method],
-                show_std=has_multiple_runs,
+                show_std=show_std,
             )
             rows.append(row)
 
