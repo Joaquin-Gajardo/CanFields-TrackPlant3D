@@ -586,6 +586,18 @@ def main():
         "share a fixed seed, so the across-run std is not a meaningful robustness "
         "measure (report the mean only).",
     )
+    parser.add_argument(
+        "--avg_mode",
+        type=str,
+        choices=["macro", "micro"],
+        default="macro",
+        help="How to compute the per-sequence table's 'Avg' column. "
+        "'macro' (default): mean of the per-plant column values shown in the table "
+        "(each plant weighted equally), so Avg == mean of the columns. "
+        "'micro': flat mean over all individual organs (each organ weighted equally), "
+        "which matches the default aggregated summary table but does NOT equal the "
+        "mean of the displayed columns.",
+    )
 
     args = parser.parse_args()
 
@@ -644,11 +656,14 @@ def main():
 
         rows = []
         for method in sorted(per_seq_stats.keys()):
+            # macro: Avg = mean of the per-plant columns (flat_avg=None triggers this
+            # inside format_per_sequence_row). micro: Avg = flat mean over all organs.
+            flat_avg = flat_avgs[method] if args.avg_mode == "micro" else None
             row = format_per_sequence_row(
                 method,
                 per_seq_stats[method],
                 sequences,
-                flat_avgs[method],
+                flat_avg,
                 show_std=show_std,
             )
             rows.append(row)
