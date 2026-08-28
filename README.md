@@ -176,6 +176,11 @@ module load stack/2024-05 gcc/13.2.0 cuda/12.2.1 eth_proxy
 sbatch run_euler.sh datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2
 ```
 
+## Results folders
+- `results` contains latest results I rerun in Euler to the scratch folder where I also fixed the -ev command which was when regularization started (changed to 7000 instead of 15000). 
+- `results_old` contains some fixes to `results_November2025` in which I had corrected some mistmatch between GT (was translated by some offset) I had locally in my workstation and predicted meshes copied from Euler and hence metrics computed locally where off
+- `results_November2025` contains old results from November 2025 (my attempted CVPR submission)
+
 ## Citation
 
    If you find our repo useful for your research, please consider citing our paper:
