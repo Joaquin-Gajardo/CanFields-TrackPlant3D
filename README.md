@@ -126,8 +126,9 @@ point correspondences to track.
 - **`-ev 7000`.** `-ev` is the iteration at which the velocity regularizers switch on, not
   the number of epochs (training runs for 15,000). `run_train_eval.sh` uses 7000.
 - **Seeds.** The published runs all used seed 3407, so the five runs per sequence differ only
-  through GPU nondeterminism, and the baseline rows are in effect single runs. The code now seeds each run with `3407 + run_idx`. `--n_runs 1` (the default)
-  uses 3407, the published seed.
+  through GPU nondeterminism, and the baseline rows are in effect single runs. The code now
+  seeds each run with `3407 + run_idx`; `--n_runs 1` (the default) uses 3407. Prefix any
+  command with `SEED=3407` to use the published seed for every run.
 - **TrackPlant3D support**: `datasets/data_pheno4d.py`, `datasets/prepare_pheno4d.py`, the
   train/test point splits in `configs/point_splits/`, and the metrics in `eval_metrics.py`
   (Chamfer distance on held-out surface points, and leaf-tip EPE matched by organ label).
@@ -184,7 +185,8 @@ Results go to `results/pheno4d/<method>/<crop>/<sequence>/<timestamp>_<run>/`, w
 ### Tables 1 and 2
 
 Run every test sequence for each method, then aggregate at epoch 15,000. `--n_runs 5` seeds
-the runs 3408–3412, so it gives a fresh five-seed estimate rather than the published runs:
+the runs 3408–3412, so it gives a fresh five-seed estimate. To repeat the published setup,
+five runs at seed 3407, prefix the commands with `SEED=3407`:
 
 ```bash
 for METHOD in TPSR NVFI 4DSDF ode_solve; do

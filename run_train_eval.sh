@@ -21,6 +21,15 @@ else
     RUN_ARG=""
 fi
 
+# Optional fixed seed via the SEED env var. Unset, train_debugV2.py uses 3407 + run_idx.
+# The published runs all used 3407: SEED=3407 reproduces them, for every run index.
+if [ -n "${SEED:-}" ]; then
+    SEED_ARG="--seed $SEED"
+    echo "Using seed: $SEED"
+else
+    SEED_ARG=""
+fi
+
 # Set adjust flag (-u) to False for non-ode_solve methods
 if [ "$METHOD" != "ode_solve" ]; then
     ADJUST="False"
@@ -51,7 +60,7 @@ else
 fi
 
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD --base_results_dir $BASE_RESULTS_DIR $SPLIT_ARG $RUN_ARG
+python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD --base_results_dir $BASE_RESULTS_DIR $SPLIT_ARG $RUN_ARG $SEED_ARG
 
 # Wait for filesystem to sync (helps with NFS)
 echo "Training completed. Waiting 10 seconds for filesystem sync..."

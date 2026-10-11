@@ -15,6 +15,8 @@
 #   --type plant|leaf|both   Which sequence types to launch (default: both).
 #   -h, --help           Show this help and exit.
 #
+# Organ sequences with fewer than MIN_TIMESTEPS frames (env var, default 3) are skipped.
+#
 # Examples:
 #   bash launch_test_jobs.sh --dry-run            # preview every job
 #   bash launch_test_jobs.sh                      # submit everything (5 runs each)
@@ -30,14 +32,10 @@ DRY_RUN=false
 SPLITS_JSON="configs/data_splits.json"
 SBATCH_SCRIPT="${SBATCH_SCRIPT:-run_euler_24GB.sh}"
 SPLIT="test"
-
-# Organ sequences that are too short to be worth running.
-EXCLUDE=(
-    maize_control_plant2_leaf5
-    maize_control_plant3_leaf4
-    sorghum_highlight_plant2_leaf5
-    tobacco_control_plant1_leaf6
-)
+DATA_DIR="datasets/Pheno4D/processed/v2"
+# Skip organ sequences with fewer frames, as run_crop_sequences.sh does (default 3, as in the
+# GrowFields paper: drops the 4 two-frame test organs, leaving 45).
+MIN_TIMESTEPS="${MIN_TIMESTEPS:-3}"
 
 # ------------------------------- arg parsing ------------------------------
 while [ $# -gt 0 ]; do
@@ -48,7 +46,7 @@ while [ $# -gt 0 ]; do
         --methods)   read -r -a METHODS <<< "$2"; shift 2 ;;
         --type)      TYPE_SEL="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "Unknown option: $1" >&2
@@ -79,9 +77,16 @@ crop_of() {
     echo "${token%%[0-9]*}"     # strip trailing digits (tomato1 -> tomato)
 }
 
-# Build a lookup of excluded sequences.
-declare -A IS_EXCLUDED
-for s in "${EXCLUDE[@]}"; do IS_EXCLUDED["$s"]=1; done
+# Number of frames of an organ sequence, counted as in run_train_eval.sh.
+num_frames() {
+    local dir="$DATA_DIR/organ_sequences/$(crop_of "$1")/$1"
+    local frames
+    shopt -s nullglob
+    frames=("$dir"/sparse_pc/*)
+    [ ${#frames[@]} -eq 0 ] && frames=("$dir"/dense_pc/*)
+    shopt -u nullglob
+    echo "${#frames[@]}"
+}
 
 # Pull the test plant + organ sequence lists straight from the splits file.
 mapfile -t PLANTS < <(python3 -c "
@@ -127,7 +132,7 @@ for method in "${METHODS[@]}"; do
     if [[ "$TYPE_SEL" == "leaf" || "$TYPE_SEL" == "both" ]]; then
         for seq in "${ORGANS[@]}"; do
             [ -z "$seq" ] && continue
-            if [ -n "${IS_EXCLUDED[$seq]:-}" ]; then
+            if [ "$(num_frames "$seq")" -lt "$MIN_TIMESTEPS" ]; then
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -139,5 +144,5 @@ done
 
 echo "================================================================="
 echo "Total jobs $( $DRY_RUN && echo 'to submit' || echo 'submitted'): $count"
-echo "Excluded short organ sequences skipped: $skipped (x${#METHODS[@]} methods)"
+echo "Organ sequences with < $MIN_TIMESTEPS frames skipped: $((skipped / ${#METHODS[@]})) (x${#METHODS[@]} methods)"
 echo "================================================================="
