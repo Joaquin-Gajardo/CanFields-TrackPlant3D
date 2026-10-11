@@ -222,8 +222,8 @@ Helper scripts:
   tips, and 45 organ sequences and 189 leaf tips, for every method and run.
 
 On a SLURM cluster, `launch_test_jobs.sh` submits one job per method and sequence through
-`run_euler.sh`, which requests a 24 GB GPU; `sbatch --gres=gpumem:80g run_euler.sh ...` asks for
-more. It is written for ETH's Euler cluster, so adapt its module lines before using it.
+`run_euler.sh`, which requests a 24 GB GPU. For more, use `sbatch --gres=gpumem:80g run_euler.sh ...`
+for one job, or `SBATCH_GRES=gpumem:80g bash launch_test_jobs.sh` for all of them. It is written for ETH's Euler cluster, so adapt its module lines before using it.
 Activate the `canfields` environment before submitting, since the jobs inherit it. Set `BASE_RESULTS_DIR` to write
 results somewhere other than `results/`, such as cluster scratch.
 

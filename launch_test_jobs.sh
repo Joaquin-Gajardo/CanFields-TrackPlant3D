@@ -16,6 +16,7 @@
 #   -h, --help           Show this help and exit.
 #
 # Organ sequences with fewer than MIN_TIMESTEPS frames (env var, default 3) are skipped.
+# run_euler.sh requests a 24 GB GPU; SBATCH_GRES=gpumem:80g overrides it for every job.
 #
 # Examples:
 #   bash launch_test_jobs.sh --dry-run            # preview every job
@@ -46,7 +47,7 @@ while [ $# -gt 0 ]; do
         --methods)   read -r -a METHODS <<< "$2"; shift 2 ;;
         --type)      TYPE_SEL="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *)
             echo "Unknown option: $1" >&2
