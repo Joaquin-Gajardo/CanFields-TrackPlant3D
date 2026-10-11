@@ -57,7 +57,7 @@ pip install -r requirements_updated.txt
 # pip install git+https://github.com/Joaquin-Gajardo/pytorch-meta.git@1.8.0-torchvision-fix
 
 # # Install remaining dependencies with compatible versions
-# pip install GPUtil==1.4.0 numpy==1.22.4 plyfile==1.1 point_cloud_utils==0.30.4 pynvml==11.5.0 pytest==8.1.1 scikit_learn==1.3.2 scipy==1.7.3 scikit-image torchdiffeq==0.2.3 wandb==0.16.3 trimesh open3d
+# pip install GPUtil==1.4.0 numpy==1.22.4 plyfile==1.1 point_cloud_utils==0.30.4 pynvml==11.5.0 pytest==8.1.1 scikit_learn==1.3.2 scipy==1.7.3 scikit-image==0.19.3 torchdiffeq==0.2.3 wandb==0.16.3 trimesh==4.9.0 open3d==0.19.0
 ```
 
 ## Quick Evaluation
@@ -114,7 +114,7 @@ extrapolation or robustness experiments.
 | CanFields | `ode_solve` | True |
 
 `run_train_eval.sh` sets `-u` from the method. `OF4D` is also implemented but was not used in
-the paper. DSR has no EPE in the paper: it models each frame independently, so it gives no
+the paper: it ran out of GPU memory on TrackPlant3D. DSR has no EPE in the paper: it models each frame independently, so it gives no
 point correspondences to track.
 
 ### What differs from upstream
