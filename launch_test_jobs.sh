@@ -2,7 +2,7 @@
 # Launch one sbatch job per (method, sequence) on the test split.
 #
 # Each job runs a single sequence so it comfortably fits in the 24h wall-time
-# limit (run_euler_24GB.sh). Jobs are submitted for both plant sequences and
+# limit (run_euler.sh). Jobs are submitted for both plant sequences and
 # organ (leaf/stem) sequences of the test split, for every method.
 #
 # Usage:
@@ -30,7 +30,7 @@ N_RUNS=5
 TYPE_SEL="both"          # plant | leaf | both
 DRY_RUN=false
 SPLITS_JSON="configs/data_splits.json"
-SBATCH_SCRIPT="${SBATCH_SCRIPT:-run_euler_24GB.sh}"
+SBATCH_SCRIPT="${SBATCH_SCRIPT:-run_euler.sh}"
 SPLIT="test"
 DATA_DIR="datasets/Pheno4D/processed/v2"
 # Skip organ sequences with fewer frames, as run_crop_sequences.sh does (default 3, as in the

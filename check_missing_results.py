@@ -458,7 +458,7 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False, n_run
             # Single job if few sequences
             sequences_str = " ".join(to_rerun_filtered)
             print(
-                f"sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
+                f"sbatch run_euler.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
             )
         else:
             # Multiple jobs
@@ -468,20 +468,20 @@ def check_crop_sequences(method, crop, seq_type, split, return_data=False, n_run
                 job_num = i // sequences_per_job + 1
                 print(f"# Job {job_num} ({len(job_sequences)} sequences)")
                 print(
-                    f"sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
+                    f"sbatch run_euler.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
                 )
                 print()
 
         print(f"# Or run all in one job:")
         sequences_str = " ".join(to_rerun_filtered)
         print(
-            f"# sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
+            f"# sbatch run_euler.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}"
         )
 
         print(f"\n# Or run them individually:")
         for seq in to_rerun_filtered:
             print(
-                f"# sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {seq}{runs_flag}"
+                f"# sbatch run_euler.sh {crop} {method} {type_name} {split} {seq}{runs_flag}"
             )
     else:
         print(f"\nAll sequences are complete!")
@@ -583,7 +583,7 @@ def check_all_crops_mixed(method, seq_type, split, n_runs=1):
         for crop in sorted(crop_groups.keys()):
             seqs = crop_groups[crop]
             sequences_str = " ".join(seqs)
-            print(f"sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}")
+            print(f"sbatch run_euler.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}")
 
         print()
 
@@ -598,7 +598,7 @@ def check_all_crops_mixed(method, seq_type, split, n_runs=1):
     for crop in sorted(crop_all_seqs.keys()):
         seqs = crop_all_seqs[crop]
         sequences_str = " ".join(seqs)
-        print(f"# sbatch run_euler_24GB.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}")
+        print(f"# sbatch run_euler.sh {crop} {method} {type_name} {split} {sequences_str}{runs_flag}")
 
     print()
 
