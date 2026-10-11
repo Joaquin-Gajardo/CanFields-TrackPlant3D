@@ -9,7 +9,13 @@ The University of Edinburgh <br>
 ![CanFields](assets/teaser.png)
 ---
 
-
+> **About this fork.** This is a fork of [wangmiaowei/CanFields](https://github.com/wangmiaowei/CanFields)
+> used to run the NDF, NVFi, DSR and CanFields baselines of
+> [GrowFields](https://github.com/Joaquin-Gajardo/growfields) (ECCV 2026) on the TrackPlant3D
+> plant growth dataset. The methods are the original authors'; the additions are a TrackPlant3D
+> loader, the evaluation splits and metrics, and the scripts to run them. See
+> [GrowFields baselines on TrackPlant3D](#growfields-baselines-on-trackplant3d) below. The
+> sections before it are the original README.
 
 
 ### Abstract
@@ -27,20 +33,17 @@ The University of Edinburgh <br>
 ### Installation Steps
 
 ```bash
-# Navigate to the project directory
-git clone https://github.com/wangmiaowei/CanFields.git
+git clone https://github.com/Joaquin-Gajardo/CanFields.git
 cd CanFields
 
 # Create conda environment with Python 3.9
 conda create -n canfields python=3.9 -y
-
-# Activate the environment
 conda activate canfields
 
 # Get gcc and g++ compilers for Pytorch3D
 conda install -c conda-forge gcc gxx
 
-# Install pytorch, pytorch3d, torchmeta, and other dependencies
+# Install pytorch, pytorch3d, torchmeta, plant-shape-analysis and other dependencies
 pip install -r requirements_updated.txt
 
 # Alternatively, install dependencies step-by-step as below
@@ -92,94 +95,133 @@ To train CanFields using sampled points from raw scans, execute:
 # Train CanFields
 python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u True -m False -c 0,15,1 -ev 7000
 ```
-### Pheno4D dataset
 
-#### Data preparation
-This steps will automatically download the dataset and prepare the sequences for training.
+---
+
+## GrowFields baselines on TrackPlant3D
+
+These are the commands behind the NDF, NVFi, DSR and CanFields rows of Tables 1 (full plant)
+and 2 (per organ) in the GrowFields paper. The baselines were not run in the interpolation,
+extrapolation or robustness experiments.
+
+### Methods
+
+| Paper name | `--method` | Consolidator (`-u`) |
+| --- | --- | --- |
+| NDF | `TPSR` | False |
+| NVFi | `NVFI` | False |
+| DSR | `4DSDF` | False |
+| CanFields | `ode_solve` | True |
+
+`run_train_eval.sh` sets `-u` from the method. `OF4D` is also implemented but was not used in
+the paper. DSR has no EPE in the paper: it models each frame independently, so it gives no
+point correspondences to track.
+
+### What differs from upstream
+
+- **A regularizer fix for NDF and NVFi** (`networks/other_volocities.py`). The velocity
+  regularizer expects its Jacobian as `[dt, dx, dy, dz]`. NVFi's was passed with the time
+  column in the wrong place, and NDF's dynamics are autonomous, so a zero time column is now
+  prepended. All published runs include this fix.
+- **`-ev 7000`.** `-ev` is the iteration at which the velocity regularizers switch on, not
+  the number of epochs (training runs for 15,000). `run_train_eval.sh` uses 7000.
+- **Seeds.** The published runs all used seed 3407, so the five runs per sequence differ only
+  through GPU nondeterminism, and the baseline rows are in effect single runs. The code now seeds each run with `3407 + run_idx`. `--n_runs 1` (the default)
+  uses 3407, the published seed.
+- **TrackPlant3D support**: `datasets/data_pheno4d.py`, `datasets/prepare_pheno4d.py`, the
+  train/test point splits in `configs/point_splits/`, and the metrics in `eval_metrics.py`
+  (Chamfer distance on held-out surface points, and leaf-tip EPE matched by organ label).
+
+### Data
+
+`prepare_pheno4d.py` downloads TrackPlant3D v2 through
+[plant-shape-analysis](https://github.com/Joaquin-Gajardo/plant-shape-analysis) (installed by
+`requirements_updated.txt`) and writes plant and organ sequences under
+`datasets/Pheno4D/processed/v2/`. The processed dataset is also deposited in the
+[ETH Research Collection](https://hdl.handle.net/20.500.11850/806887).
+
 ```bash
-# 1. Install plant-shape-analysis package
-pip uninstall plant-shape-analysis -y && pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git
-
-# 2. Prepare dataset (default: version 2, saves both plants and organs sequences, sparse only)
-python datasets/prepare_pheno4d.py --dataset-path datasets/Pheno4D/raw --output-dir datasets/Pheno4D/processed # Defaults: --version v2 --mode both --export-sparse
-````
-
-New
-````bash
-# 1. Generate all leaf sequences (256 total, including all val/test)
+# Plant and leaf sequences
 python datasets/prepare_pheno4d.py \
       --dataset-path datasets/Pheno4D/raw \
       --version v2 \
       --output-dir datasets/Pheno4D/processed \
-      --mode leaf \
+      --mode both \
       --min-timepoints 2 \
       --overwrite
 
-# 2. Extract all stem sequences (42 total)
-python scripts/extract_stem_sequences.py \
-      --dataset-path datasets/Pheno4D/processed/v2
+# Stem sequences
+python scripts/extract_stem_sequences.py --dataset-path datasets/Pheno4D/processed/v2
+```
 
-# 3. Generate organ split files for val/test sequences (73 organ splits): same as used for our method
+`configs/point_splits/` holds the 12 plant-level splits, which are identical to GrowFields', and
+the 73 organ-level splits derived from them. To regenerate the organ-level splits:
+
+```bash
 python scripts/generate_organ_splits.py \
       --dataset-path datasets/Pheno4D/processed/v2 \
       --plant-splits-dir configs/point_splits \
       --output-dir configs/point_splits
-````
-
-#### Leaf sequence
-```bash
-# Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2_leaf1 -d pheno4d -u True -m False -c 0,9,1 -ev 15000
-
-# Eval: create canonical shape
-python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1
-
-# Eval: deform canonical shape
-python eval_sphere.py -d pheno4d -e 15000 -s 2 -o datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2_leaf1 -m False --experiment_name tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1
-```
-#### Plant sequence
-Note that this could require up to 80GB of GPU memory.
-```bash
-python train_debugV2.py -a 0.05,0.05,0.01 -o datasets/Pheno4D/processed/v2/plant_sequences/tomato/tomato2_control_plant2 -d pheno4d -u True -m False -c 0,9,1 -ev 15000
-python eval_sphere.py -d pheno4d -e 15000 -s 1 -o datasets/Pheno4D/processed/v2/plant_sequences/tomato/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1
-python eval_sphere.py -d pheno4d -e 15000 -s 2 -o datasets/Pheno4D/processed/v2/plant_sequences/tomato/tomato2_control_plant2 -m False --experiment_name {timestamp}_tomato2_control_plant2_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1
 ```
 
-#### Animation
-To animate the reconstructed sequence, run:
+`eval_metrics.py` reads the ground truth and its normalization from the local dataset. Evaluate
+on the same processed copy you trained on. A copy prepared with a different
+plant-shape-analysis version can be aligned differently, which shows up as a large CD offset.
+
+### One sequence
+
+`run_train_eval.sh` trains, extracts meshes for every checkpoint (`eval_sphere.py` steps 1
+and 2) and computes metrics:
 
 ```bash
-python create_animation.py -d pheno4d -e 15000 -m 1 -o datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2_leaf1 -en {timestamp}_tomato2_control_plant2_leaf1_P4D_full_l2_0.05_elas_0.05_prob_0.01_start_id_0_gap_9_stride_1 --num_frames 9 --fps 2
+BASE_RESULTS_DIR=results bash run_train_eval.sh \
+      datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant3_leaf1 ode_solve
 ```
 
-#### Quantitative Evaluation
+Results go to `results/pheno4d/<method>/<crop>/<sequence>/<timestamp>_<run>/`, with metrics in
+`metrics/metrics_epoch_<epoch>.json`.
 
-Compute reconstruction quality metrics (Chamfer Distance and Leaf Tip EPE):
+### Tables 1 and 2
+
+Run every test sequence for each method, then aggregate at epoch 15,000. `--n_runs 5` seeds
+the runs 3408–3412, so it gives a fresh five-seed estimate rather than the published runs:
 
 ```bash
-# Compute metrics
-python eval_metrics.py -d pheno4d -o <path> -en <experiment_name> -e last --num_samples 10000
+for METHOD in TPSR NVFI 4DSDF ode_solve; do
+    BASE_RESULTS_DIR=results bash run_crop_sequences.sh all $METHOD plant test --n_runs 5  # Table 1
+    BASE_RESULTS_DIR=results bash run_crop_sequences.sh all $METHOD leaf test --n_runs 5   # Table 2
+done
 
-# Aggregate results across experiments
-python metrics/aggregate_results.py --base_dir results/pheno4d --export_csv --export_latex
+# Table 1
+python metrics/aggregate_results.py --split test --filter plants --export_csv --experiment_type regular
+python scripts/create_latex_table.py --csv output/tables/results_test_plants_epoch15000.csv \
+      --per_sequence --output output/tables/results_test_plants_per-plant_epoch15000.tex
+
+# Table 2
+python metrics/aggregate_results.py --split test --filter organs --export_csv --experiment_type regular
+python scripts/create_latex_table.py --csv output/tables/results_test_organs_epoch15000.csv \
+      --per_sequence --output output/tables/results_test_organs_per-plant_epoch15000.tex
 ```
 
-**Metrics saved to**: `results/.../metrics/metrics_epoch_{epoch}.json`
+`leaf` covers all 49 test organ sequences, stems included. The paper evaluates 45: the four
+listed under `EXCLUDE` in `launch_test_jobs.sh` are too short and were never run. Skip them
+too, by passing the sequences explicitly or deleting their result directories before
+aggregating.
 
----
+Helper scripts:
 
-## Training on ETH HPC (euler)
-```bash
-module purge
-conda activate canfields
-module load stack/2024-05 gcc/13.2.0 cuda/12.2.1 eth_proxy
-sbatch run_euler.sh datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant2
-```
+- `scripts/batch_eval_metrics.py` recomputes metrics for existing runs, e.g.
+  `--method ode_solve --filter organs --test_only --experiment_type regular`.
+- `scripts/reeval_latest.sh <methods...>` regenerates meshes and metrics for the latest run of
+  each sequence, without retraining.
+- `check_missing_results.py <method> all plant test --n_runs 5` lists runs that are missing
+  or incomplete.
+- `scripts/verify_results_counts.py` checks the two CSVs above: 8 plant sequences and 192 leaf
+  tips, and 45 organ sequences and 189 leaf tips, for every method and run.
 
-## Results folders
-- `results` contains latest results I rerun in Euler to the scratch folder where I also fixed the -ev command which was when regularization started (changed to 7000 instead of 15000). 
-- `results_old` contains some fixes to `results_November2025` in which I had corrected some mistmatch between GT (was translated by some offset) I had locally in my workstation and predicted meshes copied from Euler and hence metrics computed locally where off
-- `results_November2025` contains old results from November 2025 (my attempted CVPR submission)
+On a SLURM cluster, `launch_test_jobs.sh` submits one job per method and sequence through
+`run_euler_24GB.sh` (24 GB GPU, the default) or `run_euler.sh` (80 GB). Both are written for ETH's Euler cluster, so adapt
+their module and account lines before using them.
 
 ## Citation
 
@@ -192,3 +234,6 @@ sbatch run_euler.sh datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2
     booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV)},
     year={2025}}
    ```
+
+If you use the TrackPlant3D baselines, please also cite GrowFields; the BibTeX entry is in its
+[README](https://github.com/Joaquin-Gajardo/growfields#citation).

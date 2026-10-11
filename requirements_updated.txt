@@ -22,3 +22,5 @@ torchdiffeq==0.2.3
 wandb==0.16.3
 trimesh
 open3d
+# TrackPlant3D loader (same commit as GrowFields requirements.txt)
+plant-shape-analysis @ git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git@508c4c1df8ac55847dcd474d3ccd6f7bd993dbf7
