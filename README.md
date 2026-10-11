@@ -44,7 +44,7 @@ conda activate canfields
 conda install -c conda-forge gcc gxx
 
 # Install pytorch, pytorch3d, torchmeta, plant-shape-analysis and other dependencies
-pip install -r requirements_updated.txt
+pip install -r requirements.txt
 
 # Alternatively, install dependencies step-by-step as below
 # # Install PyTorch 1.13.0 with CUDA 11.6 support (see https://github.com/wangmiaowei/CanFields/issues/2#issuecomment-3027513665)
@@ -137,7 +137,7 @@ point correspondences to track.
 
 `prepare_pheno4d.py` downloads TrackPlant3D v2 through
 [plant-shape-analysis](https://github.com/Joaquin-Gajardo/plant-shape-analysis) (installed by
-`requirements_updated.txt`) and writes plant and organ sequences under
+`requirements.txt`) and writes plant and organ sequences under
 `datasets/Pheno4D/processed/v2/`. The processed dataset is also deposited in the
 [ETH Research Collection](https://hdl.handle.net/20.500.11850/806887).
 
@@ -222,9 +222,9 @@ Helper scripts:
   tips, and 45 organ sequences and 189 leaf tips, for every method and run.
 
 On a SLURM cluster, `launch_test_jobs.sh` submits one job per method and sequence through
-`run_euler_24GB.sh` (24 GB GPU, the default) or `run_euler.sh` (80 GB). Both are written for
-ETH's Euler cluster, so adapt their module lines before using them. Activate the `canfields`
-environment before submitting, since the jobs inherit it. Set `BASE_RESULTS_DIR` to write
+`run_euler.sh`, which requests a 24 GB GPU; `sbatch --gres=gpumem:80g run_euler.sh ...` asks for
+more. It is written for ETH's Euler cluster, so adapt its module lines before using it.
+Activate the `canfields` environment before submitting, since the jobs inherit it. Set `BASE_RESULTS_DIR` to write
 results somewhere other than `results/`, such as cluster scratch.
 
 ## Citation
