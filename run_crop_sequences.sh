@@ -16,6 +16,7 @@
 #   --n_runs N: (optional flag, default 1) repeat each sequence N times. Each repeat is stored
 #               in its own experiment dir ("{timestamp}_run{idx}_{name}") so metric aggregation
 #               can average over runs. May appear anywhere in the argument list.
+#   MIN_TIMESTEPS: (env var, default 3) skip sequences with fewer frames than this.
 #
 # Sequences match DOMA val+test splits for fair comparison:
 # - Plant sequences: 12 (4 val + 8 test)
@@ -356,15 +357,29 @@ done
 # Update SEQUENCES to filtered list
 SEQUENCES="$FILTERED_SEQUENCES"
 
-# Validate paths exist and filter out missing sequences
+# Validate paths exist and filter out missing sequences. Also skip sequences with fewer than
+# MIN_TIMESTEPS frames (default 3, as in the GrowFields paper: this drops the 4 two-frame test
+# organs, leaving 45). Set MIN_TIMESTEPS=2 to keep them.
+MIN_TIMESTEPS="${MIN_TIMESTEPS:-3}"
 VALID_SEQUENCES=""
 MISSING_COUNT=0
+SHORT_COUNT=0
 for SEQUENCE in $SEQUENCES; do
     [ -z "$SEQUENCE" ] && continue
     SEQUENCE_PATH="datasets/Pheno4D/processed/v2/$SEQUENCE"
     if [ ! -d "$SEQUENCE_PATH" ]; then
         echo "Warning: Skipping missing sequence: $(basename $SEQUENCE)"
         MISSING_COUNT=$((MISSING_COUNT + 1))
+        continue
+    fi
+    # Same frame count as run_train_eval.sh
+    NUM_FRAMES=$(ls $SEQUENCE_PATH/sparse_pc 2>/dev/null | wc -l)
+    if [ $NUM_FRAMES -eq 0 ]; then
+        NUM_FRAMES=$(ls $SEQUENCE_PATH/dense_pc 2>/dev/null | wc -l)
+    fi
+    if [ $NUM_FRAMES -lt $MIN_TIMESTEPS ]; then
+        echo "Skipping $(basename $SEQUENCE): $NUM_FRAMES frames < MIN_TIMESTEPS=$MIN_TIMESTEPS"
+        SHORT_COUNT=$((SHORT_COUNT + 1))
     else
         VALID_SEQUENCES="$VALID_SEQUENCES
 $SEQUENCE"
@@ -384,6 +399,11 @@ fi
 
 if [ $MISSING_COUNT -gt 0 ]; then
     echo "Note: Skipped $MISSING_COUNT missing sequences (e.g., stems not in dataset)"
+    echo ""
+fi
+
+if [ $SHORT_COUNT -gt 0 ]; then
+    echo "Note: Skipped $SHORT_COUNT sequences with fewer than $MIN_TIMESTEPS frames"
     echo ""
 fi
 

@@ -203,10 +203,10 @@ python scripts/create_latex_table.py --csv output/tables/results_test_organs_epo
       --per_sequence --output output/tables/results_test_organs_per-plant_epoch15000.tex
 ```
 
-`leaf` covers all 49 test organ sequences, stems included. The paper evaluates 45: the four
-listed under `EXCLUDE` in `launch_test_jobs.sh` are too short and were never run. Skip them
-too, by passing the sequences explicitly or deleting their result directories before
-aggregating.
+`run_crop_sequences.sh` skips sequences with fewer than 3 frames, as the paper does. This
+leaves 45 of the 49 test organ sequences (stems included); the four dropped organs have 2
+frames each. To run all 49, prefix the command:
+`MIN_TIMESTEPS=2 bash run_crop_sequences.sh all $METHOD leaf test --n_runs 5`.
 
 Helper scripts:
 
