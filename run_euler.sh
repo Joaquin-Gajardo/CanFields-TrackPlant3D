@@ -11,10 +11,8 @@
 
 module purge
 
-/cluster/project/cropsci/jgajardo/miniconda3/bin/conda init
-conda activate base
-conda activate canfields # this doesn't work, need to activate environment in terminal where I send the job with sbatch run.sh and then it works
-conda list
+# sbatch copies the submitting shell's environment: run `conda activate canfields` before
+# submitting. The module lines below are for ETH's Euler cluster; adapt them to yours.
 
 module load stack/2024-05
 module load gcc/13.2.0 cuda/12.2.1 eth_proxy

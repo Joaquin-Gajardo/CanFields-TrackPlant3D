@@ -9,9 +9,9 @@ METHOD=${2:-"OF4D"}
 INTERP_STRIDE=${3:-2}
 EPOCHS=15000
 
-# Base directory where all results are written. Defaults to cluster scratch but can be
-# overridden via the BASE_RESULTS_DIR env var (e.g. BASE_RESULTS_DIR=results for local runs).
-BASE_RESULTS_DIR="${BASE_RESULTS_DIR:-/cluster/scratch/jgajardo/canfields}"
+# Base directory where all results are written. Defaults to results/; override it via the
+# BASE_RESULTS_DIR env var (e.g. BASE_RESULTS_DIR=/cluster/scratch/$USER/canfields on a cluster).
+BASE_RESULTS_DIR="${BASE_RESULTS_DIR:-results}"
 mkdir -p "$BASE_RESULTS_DIR"
 
 echo "================================================================="

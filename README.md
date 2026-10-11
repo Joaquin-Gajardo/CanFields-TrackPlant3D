@@ -175,7 +175,7 @@ plant-shape-analysis version can be aligned differently, which shows up as a lar
 and 2) and computes metrics:
 
 ```bash
-BASE_RESULTS_DIR=results bash run_train_eval.sh \
+bash run_train_eval.sh \
       datasets/Pheno4D/processed/v2/organ_sequences/tomato/tomato2_control_plant3_leaf1 ode_solve
 ```
 
@@ -190,8 +190,8 @@ five runs at seed 3407, prefix the commands with `SEED=3407`:
 
 ```bash
 for METHOD in TPSR NVFI 4DSDF ode_solve; do
-    BASE_RESULTS_DIR=results bash run_crop_sequences.sh all $METHOD plant test --n_runs 5  # Table 1
-    BASE_RESULTS_DIR=results bash run_crop_sequences.sh all $METHOD leaf test --n_runs 5   # Table 2
+    bash run_crop_sequences.sh all $METHOD plant test --n_runs 5  # Table 1
+    bash run_crop_sequences.sh all $METHOD leaf test --n_runs 5   # Table 2
 done
 
 # Table 1
@@ -222,8 +222,10 @@ Helper scripts:
   tips, and 45 organ sequences and 189 leaf tips, for every method and run.
 
 On a SLURM cluster, `launch_test_jobs.sh` submits one job per method and sequence through
-`run_euler_24GB.sh` (24 GB GPU, the default) or `run_euler.sh` (80 GB). Both are written for ETH's Euler cluster, so adapt
-their module and account lines before using them.
+`run_euler_24GB.sh` (24 GB GPU, the default) or `run_euler.sh` (80 GB). Both are written for
+ETH's Euler cluster, so adapt their module lines before using them. Activate the `canfields`
+environment before submitting, since the jobs inherit it. Set `BASE_RESULTS_DIR` to write
+results somewhere other than `results/`, such as cluster scratch.
 
 ## Citation
 

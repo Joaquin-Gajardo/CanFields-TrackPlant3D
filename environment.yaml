@@ -100,4 +100,3 @@ dependencies:
       - urllib3==2.5.0
       - wandb==0.16.3
       - yacs==0.1.8
-prefix: /mnt/Data/jgajardo/miniconda3/envs/canfields

@@ -4,9 +4,9 @@ METHOD=${2:-"ode_solve"}
 RUN_IDX=${3:-""}  # Optional 1-indexed run number for repeated runs of the same sequence
 VELO_EPOCH=7000   # iteration at which velocity-network regularizers turn on (paper: 7000/15000)
 
-# Base directory where all results are written. Defaults to cluster scratch but can be
-# overridden via the BASE_RESULTS_DIR env var (e.g. BASE_RESULTS_DIR=results for local runs).
-BASE_RESULTS_DIR="${BASE_RESULTS_DIR:-/cluster/scratch/jgajardo/canfields}"
+# Base directory where all results are written. Defaults to results/; override it via the
+# BASE_RESULTS_DIR env var (e.g. BASE_RESULTS_DIR=/cluster/scratch/$USER/canfields on a cluster).
+BASE_RESULTS_DIR="${BASE_RESULTS_DIR:-results}"
 mkdir -p "$BASE_RESULTS_DIR"
 
 echo "Using sequence path: $SEQUENCE_PATH"
