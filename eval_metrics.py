@@ -1079,18 +1079,16 @@ def compute_metrics_for_epoch(args, epoch_num):
         try:
             if args.compute_normal_consistency:
                 gt_points, _, gt_normals = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
-                # Deduplicate points and normals together
-                gt_points, unique_indices, _ = pcu.deduplicate_point_cloud(
-                    gt_points, 1e-15, return_index=True
-                )
-                gt_normals = gt_normals[unique_indices]
             else:
                 gt_points, _, _ = pcu.load_mesh_vfn(gt_path, dtype=np.float32)
-                # Deduplicate
-                gt_points, _, _ = pcu.deduplicate_point_cloud(
-                    gt_points, 1e-15, return_index=True
-                )
                 gt_normals = None
+            # Deduplicate as a mask, keeping the file's point order: the point split
+            # indices and the leaf tip indices refer to that order.
+            _, unique_indices, _ = pcu.deduplicate_point_cloud(
+                gt_points, 1e-15, return_index=True
+            )
+            gt_keep = np.zeros(len(gt_points), dtype=bool)
+            gt_keep[unique_indices] = True
         except Exception as e:
             logging.error(f"Error loading ground truth {gt_path}: {e}")
             continue
@@ -1103,6 +1101,11 @@ def compute_metrics_for_epoch(args, epoch_num):
             timepoint_data = point_splits["timepoints"][original_i]
             train_indices = np.array(timepoint_data["train_indices"], dtype=np.int64)
             test_indices = np.array(timepoint_data["test_indices"], dtype=np.int64)
+            # Drop out-of-range indices and duplicate points
+            train_indices = train_indices[train_indices < len(gt_points)]
+            train_indices = train_indices[gt_keep[train_indices]]
+            test_indices = test_indices[test_indices < len(gt_points)]
+            test_indices = test_indices[gt_keep[test_indices]]
 
             # Apply splits to GT points to get the actual counts
             gt_points_train = apply_point_split(gt_points, train_indices)
@@ -1112,6 +1115,9 @@ def compute_metrics_for_epoch(args, epoch_num):
             num_pred_samples = len(gt_points_train) + len(gt_points_test)
         else:
             # No point splits, use default num_samples
+            gt_points = gt_points[gt_keep]
+            if gt_normals is not None:
+                gt_normals = gt_normals[gt_keep]
             num_pred_samples = args.num_samples
 
         # Load predicted mesh as points (and normals if needed)

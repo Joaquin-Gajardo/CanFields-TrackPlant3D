@@ -128,6 +128,10 @@ point correspondences to track.
   saving them, so evaluation used untrained ones. Checkpoints without them, including all
   published runs, get the seed-3407 training draw rebuilt on load; set
   `CANFIELDS_LEGACY_SEED` for one trained with another seed.
+- **Point splits follow the file's point order** (`datasets/data_pheno4d.py`, `eval_metrics.py`).
+  Deduplication used to reorder each frame before the split indices were applied, so the
+  published runs trained on a random half of the points that overlaps the test split. Fixed;
+  the published numbers were not retrained.
 - **`-ev 7000`.** `-ev` is the iteration at which the velocity regularizers switch on, not
   the number of epochs (training runs for 15,000). `run_train_eval.sh` uses 7000.
 - **Seeds.** The published runs all used seed 3407, so the five runs per sequence differ only

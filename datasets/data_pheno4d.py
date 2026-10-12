@@ -175,38 +175,26 @@ class DeformSamples(torch.utils.data.Dataset):
                 # v, _, n = pcu.load_mesh_vfn(full_name, dtype=np.float32)
                 # leaf_tip_mask = None
 
-                # Deduplicate points
-                v, idx, _ = pcu.deduplicate_point_cloud(v, 1e-15, return_index=True)
+                # Drop duplicates and points with near-zero normals as a mask, keeping the
+                # file's point order: the point split indices refer to that order.
+                _, idx, _ = pcu.deduplicate_point_cloud(v, 1e-15, return_index=True)
+                keep = np.zeros(len(v), dtype=bool)
+                keep[idx] = True
 
-                # Update leaf tip mask after deduplication
-                if leaf_tip_mask is not None:
-                    leaf_tip_mask = leaf_tip_mask[idx]
-
-                # Handle case where normals are not available
                 if n is not None:
-                    n = n[idx]
-                    # Filter out points with very small normals
-                    mask = np.linalg.norm(n, axis=-1) > min_norm_normal
-                    # Keep the good points and normals
-                    x = v[mask].astype(np.float32)
-                    n = n[mask].astype(np.float32)
-                    n /= np.linalg.norm(n, axis=-1, keepdims=True)
-
-                    # Update leaf tip mask after normal filtering
-                    if leaf_tip_mask is not None:
-                        leaf_tip_mask = leaf_tip_mask[mask]
+                    keep &= np.linalg.norm(n, axis=-1) > min_norm_normal
                 else:
-                    # No normals available, use all points and estimate normals with Open3D
-                    x = v.astype(np.float32)
-                    # Create Open3D point cloud and estimate normals
+                    # No normals available, estimate them with Open3D on the kept points
                     pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(x)
+                    pcd.points = o3d.utility.Vector3dVector(v[keep].astype(np.float64))
                     pcd.estimate_normals()
                     pcd.orient_normals_consistent_tangent_plane(k=30)
                     pcd.orient_normals_to_align_with_direction()
-                    n = np.asarray(pcd.normals).astype(np.float32)
+                    n = np.zeros_like(v, dtype=np.float32)
+                    n[keep] = np.asarray(pcd.normals)
 
-                if len(x) == 0:
+                selected = np.flatnonzero(keep)
+                if len(selected) == 0:
                     print(f"Warning: No valid points in {sub_file}, skipping...")
                     continue
 
@@ -223,24 +211,25 @@ class DeformSamples(torch.utils.data.Dataset):
                             timepoint_data["test_indices"], dtype=np.int64
                         )
 
-                    # Ensure indices are within bounds
-                    split_indices = split_indices[split_indices < len(x)]
+                    # Ensure indices are within bounds, then drop the removed points
+                    split_indices = split_indices[split_indices < len(v)]
+                    selected = split_indices[keep[split_indices]]
 
-                    if len(split_indices) == 0:
+                    if len(selected) == 0:
                         print(
                             f"Warning: No valid split indices for {sub_file} timepoint {i}, skipping..."
                         )
                         continue
 
-                    # Apply the split
-                    x = x[split_indices]
-                    n = n[split_indices]
-                    if leaf_tip_mask is not None:
-                        leaf_tip_mask = leaf_tip_mask[split_indices]
-
                     print(
-                        f"  Applied point split to timepoint {i}: {len(split_indices)} points"
+                        f"  Applied point split to timepoint {i}: {len(selected)} points"
                     )
+
+                x = v[selected].astype(np.float32)
+                n = n[selected].astype(np.float32)
+                n /= np.linalg.norm(n, axis=-1, keepdims=True)
+                if leaf_tip_mask is not None:
+                    leaf_tip_mask = leaf_tip_mask[selected]
 
                 self.train_xx.append(torch.tensor(x))
                 self.train_nn.append(torch.tensor(n))
