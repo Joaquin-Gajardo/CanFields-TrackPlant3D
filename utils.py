@@ -70,9 +70,35 @@ def load_model_parameters(experiment_directory, checkpoint, decoder):
     if not os.path.isfile(filename):
         raise Exception('model state dict "{}" does not exist'.format(filename))
     data = torch.load(filename)
-    decoder.load_state_dict(data["model_state_dict"])
+    state = data["model_state_dict"]
+
+    # Checkpoints from before VelocityLayer.samples became a buffer do not contain the random
+    # frequencies the model was trained with; rebuild them.
+    for key, value in decoder.state_dict().items():
+        if key.endswith("odefunc.samples") and key not in state:
+            state[key] = legacy_velocity_samples().to(value.device)
+            seed = os.environ.get("CANFIELDS_LEGACY_SEED", 3407)
+            logging.warning(f"{filename}: no {key}, rebuilding the seed-{seed} training draw")
+    decoder.load_state_dict(state)
 
     return data["epoch"]
+
+
+def legacy_velocity_samples(seed=None):
+    """VelocityLayer frequencies drawn by a run trained with `seed` before they were saved.
+
+    Training seeds and then builds the Decoder, whose VelocityLayer is the first random draw,
+    so seeding and building a VelocityLayer reproduces them. All GrowFields paper runs used
+    seed 3407, the default; set CANFIELDS_LEGACY_SEED for a run trained with another seed.
+    The global random state is left untouched.
+    """
+    from networks.multi_velocity_debug import VelocityLayer
+
+    if seed is None:
+        seed = int(os.environ.get("CANFIELDS_LEGACY_SEED", 3407))
+    with torch.random.fork_rng():
+        torch.manual_seed(seed)
+        return VelocityLayer().samples.cpu()
 
 
 def load_optimizer(experiment_directory, filename, optimizer):

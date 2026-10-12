@@ -225,8 +225,9 @@ class VelocityLayer(nn.Module):
         self.compute_gradient = False
         self.grads = []
         mvn = torch.distributions.MultivariateNormal(torch.zeros(4), covariance_matrix=((0.4*torch.pi*2)**2) * torch.eye(4))
-        # Sample from the distribution
-        self.samples = mvn.sample(torch.Size([20])).cuda()
+        # Sample from the distribution. A buffer, so checkpoints save the frequencies the model
+        # was trained with; older checkpoints lack it (see utils.load_model_parameters).
+        self.register_buffer("samples", mvn.sample(torch.Size([20])).cuda())
     def create(self,embeddings):
         self.embeddings = embeddings
     def _reset_parameters(self):

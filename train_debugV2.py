@@ -146,6 +146,8 @@ def velocity_test():
         "pts_num": args.pts_num,
         "experiment_directory": experiment_directory,
         "timestamp": timestamp,
+        "seed": seed,
+        "run_idx": args.run_idx,
     }
 
     wandb = wandb_name_init(

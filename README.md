@@ -123,6 +123,11 @@ point correspondences to track.
   regularizer expects its Jacobian as `[dt, dx, dy, dz]`. NVFi's was passed with the time
   column in the wrong place, and NDF's dynamics are autonomous, so a zero time column is now
   prepended. All published runs include this fix.
+- **CanFields' random frequencies are saved in checkpoints** (`networks/multi_velocity_debug.py`).
+  Upstream draws `VelocityLayer`'s Fourier frequencies at random on every model build without
+  saving them, so evaluation used untrained ones. Checkpoints without them, including all
+  published runs, get the seed-3407 training draw rebuilt on load; set
+  `CANFIELDS_LEGACY_SEED` for one trained with another seed.
 - **`-ev 7000`.** `-ev` is the iteration at which the velocity regularizers switch on, not
   the number of epochs (training runs for 15,000). `run_train_eval.sh` uses 7000.
 - **Seeds.** The published runs all used seed 3407, so the five runs per sequence differ only
