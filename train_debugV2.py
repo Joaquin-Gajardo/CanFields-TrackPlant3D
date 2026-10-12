@@ -16,6 +16,9 @@ from utils import wandb_name_init
 
 
 def set_most_idle_gpu_as_visible():
+    # Respect a GPU mask set by the user or a scheduler such as SLURM
+    if os.environ.get("CUDA_VISIBLE_DEVICES"):
+        return
     gpus = GPUtil.getGPUs()
     if not gpus:
         print("No GPUs found!")
