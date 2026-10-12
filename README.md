@@ -46,18 +46,21 @@ conda install -c conda-forge gcc gxx
 # Install pytorch, pytorch3d, torchmeta, plant-shape-analysis and other dependencies
 pip install -r requirements.txt
 
-# Alternatively, install dependencies step-by-step as below
-# # Install PyTorch 1.13.0 with CUDA 11.6 support (see https://github.com/wangmiaowei/CanFields/issues/2#issuecomment-3027513665)
-# pip install torch==1.13.0+cu116 torchvision==0.14.0+cu116 --extra-index-url https://download.pytorch.org/whl/cu116
+# Alternatively, install the same dependencies step by step
+# # PyTorch 1.13.0, the PyPI build (CUDA 11.7) the GrowFields runs used
+# pip install torch==1.13.0 torchvision==0.14.0
 
-# # Install compatible PyTorch3D from source (version 0.7.2). See https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md
+# # PyTorch3D 0.7.2 wheel (built for CUDA 11.6, runs on the build above). See https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md
 # pip install pytorch3d@https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu116_pyt1130/pytorch3d-0.7.2-cp39-cp39-linux_x86_64.whl
 
-# # Install torchmeta 1.8.0 from fork (original requires torch<1.10.0 and torchvision<0.11.0)
+# # torchmeta 1.8.0 from a fork (the original requires torch<1.10.0 and torchvision<0.11.0)
 # pip install git+https://github.com/Joaquin-Gajardo/pytorch-meta.git@1.8.0-torchvision-fix
 
-# # Install remaining dependencies with compatible versions
+# # Remaining dependencies
 # pip install GPUtil==1.4.0 numpy==1.22.4 plyfile==1.1 point_cloud_utils==0.30.4 pynvml==11.5.0 pytest==8.1.1 scikit_learn==1.3.2 scipy==1.7.3 scikit-image==0.19.3 torchdiffeq==0.2.3 wandb==0.16.3 trimesh==4.9.0 open3d==0.19.0
+
+# # TrackPlant3D loader, same commit as GrowFields
+# pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git@96d9eab34083efe91fe3c01ce2b2a61248b2d7e8
 ```
 
 ## Quick Evaluation

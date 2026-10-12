@@ -1,8 +1,9 @@
-# PyTorch with CUDA 11.6
-torch==1.13.0 --extra-index-url https://download.pytorch.org/whl/cu116
-torchvision==0.14.0 --extra-index-url https://download.pytorch.org/whl/cu116
+# PyTorch 1.13.0, the PyPI build (CUDA 11.7) the paper runs used
+torch==1.13.0
+torchvision==0.14.0
 
-# PyTorch3D 0.7.2 (built for Python 3.9, CUDA 11.6, PyTorch 1.13.0)
+# PyTorch3D 0.7.2, the wheel the paper runs used (built for Python 3.9, CUDA 11.6, PyTorch 1.13.0;
+# runs on the CUDA 11.7 build above)
 pytorch3d @ https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu116_pyt1130/pytorch3d-0.7.2-cp39-cp39-linux_x86_64.whl
 
 # TorchMeta fork with torchvision fix
