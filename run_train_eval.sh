@@ -59,37 +59,43 @@ else
     SPLIT_ARG=""
 fi
 
+# Runs already on disk, so evaluation uses only the one this training creates
+EXPERIMENT_DIR="$BASE_RESULTS_DIR/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
+EXISTING_RUNS=$(ls "$EXPERIMENT_DIR" 2>/dev/null | sort)
+
 # Train CanFields
-python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD --base_results_dir $BASE_RESULTS_DIR $SPLIT_ARG $RUN_ARG $SEED_ARG
+if ! python train_debugV2.py -a 0.05,0.05,0.01 -o $SEQUENCE_PATH -d pheno4d -u $ADJUST -m False -c 0,$NUM_TIMESTEPS,1 -ev $VELO_EPOCH --method $METHOD --base_results_dir $BASE_RESULTS_DIR $SPLIT_ARG $RUN_ARG $SEED_ARG; then
+    echo "ERROR: training failed. Skipping evaluation."
+    exit 1
+fi
 
 # Wait for filesystem to sync (helps with NFS)
 echo "Training completed. Waiting 10 seconds for filesystem sync..."
 sync
 sleep 10
 
-# Get the latest experiment directory
+# The experiment directory this training created
 # Path: $BASE_RESULTS_DIR/pheno4d/{method}/{crop}/{sequence_name}/
-EXPERIMENT_DIR="$BASE_RESULTS_DIR/pheno4d/$METHOD/$CROP/$SEQUENCE_NAME"
-if [ ! -d "$EXPERIMENT_DIR" ]; then
-    echo "ERROR: Experiment directory not found: $EXPERIMENT_DIR"
-    echo "Training may have failed. Skipping evaluation."
+NEW_RUNS=$(comm -13 <(echo "$EXISTING_RUNS") <(ls "$EXPERIMENT_DIR" 2>/dev/null | sort) | sed '/^$/d')
+if [ -n "$RUN_IDX" ]; then
+    NEW_RUNS=$(echo "$NEW_RUNS" | grep "_run${RUN_IDX}_")
+fi
+if [ "$(echo "$NEW_RUNS" | sed '/^$/d' | wc -l)" -ne 1 ]; then
+    echo "ERROR: expected one new experiment in $EXPERIMENT_DIR, found: ${NEW_RUNS:-none}"
     exit 1
 fi
-
-EXPERIMENT_NAME=$(ls -t "$EXPERIMENT_DIR" 2>/dev/null | head -n 1)
-if [ -z "$EXPERIMENT_NAME" ]; then
-    echo "ERROR: No experiment found in $EXPERIMENT_DIR"
-    echo "Training may have failed. Skipping evaluation."
-    exit 1
-fi
+EXPERIMENT_NAME=$NEW_RUNS
 
 echo "Found experiment: $EXPERIMENT_NAME"
 
 # Eval: create canonical shape
-python eval_sphere.py -d pheno4d -e all -s 1 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD --base_results_dir $BASE_RESULTS_DIR
+python eval_sphere.py -d pheno4d -e all -s 1 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD --base_results_dir $BASE_RESULTS_DIR \
+    || { echo "ERROR: eval_sphere.py -s 1 failed"; exit 1; }
 
 # Eval: deform canonical shape
-python eval_sphere.py -d pheno4d -e all -s 2 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD --base_results_dir $BASE_RESULTS_DIR
+python eval_sphere.py -d pheno4d -e all -s 2 -o $SEQUENCE_PATH -m False --experiment_name $EXPERIMENT_NAME --method $METHOD --base_results_dir $BASE_RESULTS_DIR \
+    || { echo "ERROR: eval_sphere.py -s 2 failed"; exit 1; }
 
 # Eval: compute metrics (Chamfer Distance and EPE) with point splits
-python eval_metrics.py -d pheno4d -e all -o $SEQUENCE_PATH --experiment_name $EXPERIMENT_NAME --methods $METHOD $SPLIT_ARG --base_results_dir $BASE_RESULTS_DIR
+python eval_metrics.py -d pheno4d -e all -o $SEQUENCE_PATH --experiment_name $EXPERIMENT_NAME --methods $METHOD $SPLIT_ARG --base_results_dir $BASE_RESULTS_DIR \
+    || { echo "ERROR: eval_metrics.py failed"; exit 1; }
