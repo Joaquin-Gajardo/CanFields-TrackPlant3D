@@ -1,3 +1,11 @@
+> **About this fork.** This fork of [wangmiaowei/CanFields](https://github.com/wangmiaowei/CanFields)
+> runs the NDF, NVFi, DSR and CanFields baselines of
+> [GrowFields](https://github.com/Joaquin-Gajardo/growfields) (ECCV 2026) on the TrackPlant3D
+> plant growth dataset. The methods are the original authors'; the fork adds a TrackPlant3D
+> loader, the evaluation splits and metrics, the scripts to run them, and fixes to two
+> evaluation bugs. See [GrowFields baselines on TrackPlant3D](#growfields-baselines-on-trackplant3d)
+> below.
+
 # CanFields: Consolidating Diffeomorphic Flows for Non-Rigid 4D Interpolation from Arbitrary-Length Sequences (ICCV2025)
 
 ### [[Project Page](https://wangmiaowei.github.io/CanFields.github.io/)] [[arXiv](https://arxiv.org/abs/2406.18582)] 
@@ -8,15 +16,6 @@ The University of Edinburgh <br>
 
 ![CanFields](assets/teaser.png)
 ---
-
-> **About this fork.** This is a fork of [wangmiaowei/CanFields](https://github.com/wangmiaowei/CanFields)
-> used to run the NDF, NVFi, DSR and CanFields baselines of
-> [GrowFields](https://github.com/Joaquin-Gajardo/growfields) (ECCV 2026) on the TrackPlant3D
-> plant growth dataset. The methods are the original authors'; the additions are a TrackPlant3D
-> loader, the evaluation splits and metrics, and the scripts to run them. See
-> [GrowFields baselines on TrackPlant3D](#growfields-baselines-on-trackplant3d) below. The
-> sections before it are the original README.
-
 
 ### Abstract
 
