@@ -357,7 +357,8 @@ def compute_pytorch3d_chamfer_distance(
     Returns:
         Tuple of (chamfer_distance, normal_consistency)
         - chamfer_distance: float, sum of bidirectional distances
-        - normal_consistency: float or None, 1 - cosine_distance (1=aligned, 0=orthogonal)
+        - normal_consistency: float or None, mean |cos| between nearest-neighbour normals,
+          averaged over both directions (1=aligned or opposite, 0=orthogonal)
     """
     # PyTorch3D expects batch dimension
     pred_batch = pred_points.unsqueeze(0)  # (1, N, 3)
@@ -369,16 +370,16 @@ def compute_pytorch3d_chamfer_distance(
 
     # chamfer_distance returns (loss_points, loss_normals) where:
     # loss_points: sum of bidirectional point distances
-    # loss_normals: cosine distance of normals (if normals provided), else None
+    # loss_normals: sum over both directions of mean(1 - |cos|), in [0, 2] (if normals
+    #   provided), else None
     cd_loss, normal_loss = chamfer_distance(
         pred_batch, gt_batch, x_normals=pred_normals_batch, y_normals=gt_normals_batch
     )
 
-    # Convert cosine distance to consistency: 1 - cosine_distance
-    # (cosine distance ranges from 0=aligned to 2=opposite, so 1-cosine_dist gives consistency)
+    # Halve the two-direction sum before converting, so consistency lies in [0, 1].
     normal_consistency = None
     if normal_loss is not None:
-        normal_consistency = (1.0 - normal_loss).item()
+        normal_consistency = (1.0 - normal_loss / 2).item()
 
     return cd_loss.item(), normal_consistency
 
