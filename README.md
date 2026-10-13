@@ -33,8 +33,8 @@ The University of Edinburgh <br>
 ### Installation Steps
 
 ```bash
-git clone https://github.com/Joaquin-Gajardo/CanFields.git
-cd CanFields
+git clone https://github.com/Joaquin-Gajardo/CanFields-TrackPlant3D.git
+cd CanFields-TrackPlant3D
 
 # Create conda environment with Python 3.9
 conda create -n canfields python=3.9 -y
