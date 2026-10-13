@@ -63,7 +63,10 @@ pip install -r requirements.txt
 # pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git@96d9eab34083efe91fe3c01ce2b2a61248b2d7e8
 ```
 
-## Quick Evaluation
+<details>
+<summary>Upstream examples: quick evaluation and fitting from raw scans (Deforming4D)</summary>
+
+### Quick evaluation
 
 Our algorithm has been tested on multiple datasets. Below is the quick evaluation process for the raw scanned sequence `one_leg_loose` as presented in Fig. 10.
 
@@ -90,7 +93,7 @@ python eval_sphere.py -d animals -e 15000 -s 2 -o 50002_one_leg_loose_1_full_l2_
 
 ---
 
-## Fitting from Raw Scans
+### Fitting from raw scans
 
 To train CanFields using sampled points from raw scans, execute:
 
@@ -99,6 +102,8 @@ To train CanFields using sampled points from raw scans, execute:
 python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u True -m False -c 0,15,1 -ev 7000
 ```
 
+</details>
+
 ---
 
 ## GrowFields baselines on TrackPlant3D
@@ -106,6 +111,10 @@ python train_debugV2.py -a 0.05,0.05,0.01 -o 50002_one_leg_loose_1 -d animals -u
 These are the commands behind the NDF, NVFi, DSR and CanFields rows of Tables 1 (full plant)
 and 2 (per organ) in the GrowFields paper. The baselines were not run in the interpolation,
 extrapolation or robustness experiments.
+
+The published rows were trained with the code of commit [`a865e96`](https://github.com/Joaquin-Gajardo/CanFields-TrackPlant3D/commit/a865e966c4c86d02dc63772f097b518a2bfa3500),
+all at seed 3407. Two fixes below came later; each says how it changes those numbers, and
+caveat 8 of GrowFields' [`REPRODUCIBILITY.md`](https://github.com/Joaquin-Gajardo/growfields/blob/main/REPRODUCIBILITY.md#known-inconsistenciescaveats) has the details.
 
 ### Methods
 
@@ -125,24 +134,26 @@ point correspondences to track.
 - **A regularizer fix for NDF and NVFi** (`networks/other_volocities.py`). The velocity
   regularizer expects its Jacobian as `[dt, dx, dy, dz]`. NVFi's was passed with the time
   column in the wrong place, and NDF's dynamics are autonomous, so a zero time column is now
-  prepended. All published runs include this fix.
+  prepended. Included in the published runs.
 - **CanFields' random frequencies are saved in checkpoints** (`networks/multi_velocity_debug.py`).
   Upstream draws `VelocityLayer`'s Fourier frequencies at random on every model build without
   saving them, so evaluation used untrained ones. Checkpoints without them, including all
   published runs, get the seed-3407 training draw rebuilt on load; set
-  `CANFIELDS_LEGACY_SEED` for one trained with another seed.
+  `CANFIELDS_LEGACY_SEED` for one trained with another seed. The published numbers predate
+  this fix: re-evaluated with the training frequencies, CanFields' Table 1 means go from CD
+  615.7 and EPE 44.4 to 130.1 and 37.9 (see
+  [caveat 8](https://github.com/Joaquin-Gajardo/growfields/blob/main/REPRODUCIBILITY.md#known-inconsistenciescaveats)).
 - **Point splits follow the file's point order** (`datasets/data_pheno4d.py`, `eval_metrics.py`).
   Deduplication used to reorder each frame before the split indices were applied, so the
-  published runs trained on a random half of the points that overlaps the test split. Fixed;
-  the published numbers were not retrained.
+  published runs trained on a random half of the points that overlaps the test split. They
+  predate this fix and were not retrained; retraining DSR with it moves CD by under 1%.
 - **`-ev 7000`, as upstream and in the published runs.** `-ev` is the iteration at which the
   velocity regularizers switch on, not the number of epochs (training runs for 15,000).
-- **Seeds and commits.** The published runs were trained with the code of commit `a865e96`,
-  which includes the regularizer fix but not the frequency and point-split fixes, and all used
-  seed 3407. Their five runs per sequence are therefore identical for NDF, NVFi and DSR, and
-  differ for CanFields only through PyTorch3D's nondeterministic KNN. The code now seeds each
-  run with `3407 + run_idx`; `--n_runs 1` (the default) uses 3407. Prefix any command with
-  `SEED=3407` to use the published seed for every run.
+- **Seeds.** The published runs all used seed 3407, so their five runs per sequence are
+  identical for NDF, NVFi and DSR, and differ for CanFields only through PyTorch3D's
+  nondeterministic KNN. The code now seeds each run with `3407 + run_idx`; `--n_runs 1` (the
+  default) uses 3407. Prefix any command with `SEED=3407` to use the published seed for every
+  run.
 - **TrackPlant3D support**: `datasets/data_pheno4d.py`, `datasets/prepare_pheno4d.py`, the
   train/test point splits in `configs/point_splits/`, and the metrics in `eval_metrics.py`
   (Chamfer distance on held-out surface points, and leaf-tip EPE matched by organ label).
@@ -253,5 +264,5 @@ results somewhere other than `results/`, such as cluster scratch.
     year={2025}}
    ```
 
-If you use the TrackPlant3D baselines, please also cite GrowFields; the BibTeX entry is in its
+If you use find this fork useful, please also cite GrowFields; the BibTeX entry is in its
 [README](https://github.com/Joaquin-Gajardo/growfields#citation).
