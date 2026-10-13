@@ -208,16 +208,35 @@ Results go to `results/pheno4d/<method>/<crop>/<sequence>/<timestamp>_<run>/`, w
 
 ### Tables 1 and 2
 
-Run every test sequence for each method, then aggregate at epoch 15,000. `--n_runs 5` seeds
-the runs 3408–3412, so it gives a fresh five-seed estimate. To repeat the published setup,
-five runs at seed 3407, prefix the commands with `SEED=3407`:
+The paper's rows are 4 methods × 53 test sequences (8 plants, 45 organs) × 5 runs. One run takes
+13 minutes (DSR) to about 3 hours (NVFi) on a GPU, so the full set is roughly 2,000 GPU-hours:
+run it on a cluster. `--n_runs 5` seeds the runs 3408–3412, a fresh five-seed estimate; prefix
+the commands with `SEED=3407` to repeat the published setup, five runs at seed 3407.
+
+On a SLURM cluster, `launch_test_jobs.sh` submits one job per method and sequence (212 in all),
+each running its five runs. DSR and every organ sequence fit in 24 GB; full plants of NDF, NVFi
+and CanFields run out of memory there after epoch 5000, so the published ones used 80 GB:
 
 ```bash
-for METHOD in TPSR NVFI 4DSDF ode_solve; do
-    bash run_crop_sequences.sh all $METHOD plant test --n_runs 5  # Table 1
-    bash run_crop_sequences.sh all $METHOD leaf test --n_runs 5   # Table 2
-done
+bash launch_test_jobs.sh --dry-run                     # preview all jobs
+bash launch_test_jobs.sh --type leaf                   # organ sequences, all methods (24 GB)
+bash launch_test_jobs.sh --methods "4DSDF" --type plant  # DSR full plants (24 GB)
+SBATCH_GRES=gpumem:80g bash launch_test_jobs.sh --methods "TPSR NVFI ode_solve" --type plant
+```
 
+The jobs go through `run_euler.sh`, which is written for ETH's Euler cluster, so adapt its
+module lines first. Activate the `canfields` environment before submitting, since the jobs
+inherit it, and set `BASE_RESULTS_DIR` to write somewhere other than `results/`, such as
+cluster scratch. Without a cluster, `run_crop_sequences.sh` runs one method's sequences one
+after another, e.g. `bash run_crop_sequences.sh all 4DSDF plant test --n_runs 5`.
+
+Both skip sequences with fewer than 3 frames, as the paper does. This leaves 45 of the 49 test
+organ sequences (stems included); the four dropped organs have 2 frames each. Prefix
+`MIN_TIMESTEPS=2` to run all 49.
+
+Then aggregate at epoch 15,000:
+
+```bash
 # Table 1
 python metrics/aggregate_results.py --split test --filter plants --export_csv --experiment_type regular
 python scripts/create_latex_table.py --csv output/tables/results_test_plants_epoch15000.csv \
@@ -229,11 +248,6 @@ python scripts/create_latex_table.py --csv output/tables/results_test_organs_epo
       --per_sequence --output output/tables/results_test_organs_per-plant_epoch15000.tex
 ```
 
-`run_crop_sequences.sh` skips sequences with fewer than 3 frames, as the paper does. This
-leaves 45 of the 49 test organ sequences (stems included); the four dropped organs have 2
-frames each. To run all 49, prefix the command:
-`MIN_TIMESTEPS=2 bash run_crop_sequences.sh all $METHOD leaf test --n_runs 5`.
-
 Helper scripts:
 
 - `scripts/batch_eval_metrics.py` recomputes metrics for existing runs, e.g.
@@ -244,12 +258,6 @@ Helper scripts:
   or incomplete.
 - `scripts/verify_results_counts.py` checks the two CSVs above: 8 plant sequences and 192 leaf
   tips, and 45 organ sequences and 189 leaf tips, for every method and run.
-
-On a SLURM cluster, `launch_test_jobs.sh` submits one job per method and sequence through
-`run_euler.sh`, which requests a 24 GB GPU. For more, use `sbatch --gres=gpumem:80g run_euler.sh ...`
-for one job, or `SBATCH_GRES=gpumem:80g bash launch_test_jobs.sh` for all of them. It is written for ETH's Euler cluster, so adapt its module lines before using it.
-Activate the `canfields` environment before submitting, since the jobs inherit it. Set `BASE_RESULTS_DIR` to write
-results somewhere other than `results/`, such as cluster scratch.
 
 ## Citation
 
