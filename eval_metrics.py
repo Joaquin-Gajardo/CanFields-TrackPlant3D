@@ -21,6 +21,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -1026,16 +1027,22 @@ def compute_metrics_for_epoch(args, epoch_num):
     logging.info(f"Found {len(pred_files)} predicted meshes")
     logging.info(f"Found {len(gt_files)} ground truth point clouds")
 
-    if len(pred_files) != len(gt_files):
-        logging.warning(
-            f"Number of predicted meshes ({len(pred_files)}) does not match "
-            f"number of ground truth point clouds ({len(gt_files)})"
-        )
-        # Use minimum length
-        min_len = min(len(pred_files), len(gt_files))
-        pred_files = pred_files[:min_len]
-        gt_files = gt_files[:min_len]
-        gt_paths = gt_paths[:min_len]
+    # Pair each ground-truth frame with its predicted mesh: by name where meshes are named
+    # after the frames, else (DSR names them by normalized time) in time order, one per frame
+    if set(pred_files) & set(gt_files):
+        missing = sorted(set(gt_files) - set(pred_files))
+        if missing:
+            raise ValueError(
+                f"{len(missing)} of {len(gt_files)} frames have no predicted mesh in "
+                f"{pred_mesh_dir}: {missing}"
+            )
+        pred_files = list(gt_files)
+    else:
+        if len(pred_files) != len(gt_files):
+            raise ValueError(
+                f"{len(pred_files)} predicted meshes for {len(gt_files)} frames in {pred_mesh_dir}"
+            )
+        pred_files = sorted(pred_files, key=lambda f: float(f[: -len(".ply")]))
 
     # Initialize metrics
     metrics_calculator = PlantMetrics()
@@ -2072,6 +2079,7 @@ def main():
     )
     if failed_epochs:
         logging.warning(f"Failed epochs: {failed_epochs}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

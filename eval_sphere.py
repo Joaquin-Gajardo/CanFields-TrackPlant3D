@@ -690,17 +690,28 @@ if __name__ == "__main__":
             if args.step == "1":
                 key_file = os.path.join(epoch_export_path, "normalized_tempt.ply")
             else:  # step == "2"
-                # Check if there are any numbered PLY files (e.g., 0.0.ply, 0.125.ply, etc.)
-                ply_files_exist = (
-                    os.path.exists(epoch_export_path)
-                    and any(
-                        f.endswith(".ply") and f != "normalized_tempt.ply"
-                        for f in os.listdir(epoch_export_path)
-                    )
+                # Skip only a complete export: on TrackPlant3D, one mesh per ground-truth
+                # frame, named after it. A partial export is regenerated.
+                existing = (
+                    set(os.listdir(epoch_export_path))
                     if os.path.exists(epoch_export_path)
-                    else False
+                    else set()
                 )
-                key_file = epoch_export_path if ply_files_exist else None
+                if args.dataset_name == "pheno4d":
+                    gt_dir = os.path.join(args.object_name, "sparse_pc")
+                    expected = {f for f in os.listdir(gt_dir) if f.endswith(".ply")}
+                    # Meshes are named after the frames, or (DSR) by normalized time
+                    exported = {f for f in existing if f.endswith(".ply")} - {"normalized_tempt.ply"}
+                    complete = bool(expected) and (
+                        expected <= existing
+                        or (not exported & expected and len(exported) == len(expected))
+                    )
+                else:
+                    complete = any(
+                        f.endswith(".ply") and f != "normalized_tempt.ply"
+                        for f in existing
+                    )
+                key_file = epoch_export_path if complete else None
 
             if key_file and os.path.exists(key_file) and not args.overwrite:
                 print(f"PLY files already exist in {epoch_export_path}")
