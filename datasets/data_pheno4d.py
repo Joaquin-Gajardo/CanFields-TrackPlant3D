@@ -194,9 +194,10 @@ class DeformSamples(torch.utils.data.Dataset):
                     n[keep] = np.asarray(pcd.normals)
 
                 selected = np.flatnonzero(keep)
+                # Fail instead of skipping: a skipped frame would shift every later frame's
+                # time and train flag, which are appended above
                 if len(selected) == 0:
-                    print(f"Warning: No valid points in {sub_file}, skipping...")
-                    continue
+                    raise ValueError(f"No valid points in {sub_file}")
 
                 # Apply point splits if provided
                 if self.point_splits is not None:
@@ -216,10 +217,9 @@ class DeformSamples(torch.utils.data.Dataset):
                     selected = split_indices[keep[split_indices]]
 
                     if len(selected) == 0:
-                        print(
-                            f"Warning: No valid split indices for {sub_file} timepoint {i}, skipping..."
+                        raise ValueError(
+                            f"No valid split indices for {sub_file} timepoint {i}"
                         )
-                        continue
 
                     print(
                         f"  Applied point split to timepoint {i}: {len(selected)} points"
@@ -250,8 +250,7 @@ class DeformSamples(torch.utils.data.Dataset):
                 train_lens += 1
 
             except Exception as e:
-                print(f"Error loading {sub_file}: {e}")
-                continue
+                raise ValueError(f"Error loading {sub_file}: {e}") from e
 
         self.lens = train_lens
         self.sub_files = sub_files
