@@ -135,12 +135,14 @@ point correspondences to track.
   Deduplication used to reorder each frame before the split indices were applied, so the
   published runs trained on a random half of the points that overlaps the test split. Fixed;
   the published numbers were not retrained.
-- **`-ev 7000`.** `-ev` is the iteration at which the velocity regularizers switch on, not
-  the number of epochs (training runs for 15,000). `run_train_eval.sh` uses 7000.
-- **Seeds.** The published runs all used seed 3407, so the five runs per sequence differ only
-  through GPU nondeterminism, and the baseline rows are in effect single runs. The code now
-  seeds each run with `3407 + run_idx`; `--n_runs 1` (the default) uses 3407. Prefix any
-  command with `SEED=3407` to use the published seed for every run.
+- **`-ev 7000`, as upstream and in the published runs.** `-ev` is the iteration at which the
+  velocity regularizers switch on, not the number of epochs (training runs for 15,000).
+- **Seeds and commits.** The published runs were trained with the code of commit `a865e96`,
+  which includes the regularizer fix but not the frequency and point-split fixes, and all used
+  seed 3407. Their five runs per sequence are therefore identical for NDF, NVFi and DSR, and
+  differ for CanFields only through PyTorch3D's nondeterministic KNN. The code now seeds each
+  run with `3407 + run_idx`; `--n_runs 1` (the default) uses 3407. Prefix any command with
+  `SEED=3407` to use the published seed for every run.
 - **TrackPlant3D support**: `datasets/data_pheno4d.py`, `datasets/prepare_pheno4d.py`, the
   train/test point splits in `configs/point_splits/`, and the metrics in `eval_metrics.py`
   (Chamfer distance on held-out surface points, and leaf-tip EPE matched by organ label).
