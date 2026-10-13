@@ -122,12 +122,11 @@ def find_best_available_epoch(metrics_dir, requested_epoch, metric_type="eval"):
         if epoch_num == requested_epoch:
             return filepath, epoch_num
 
-    # Fall back to closest earlier epoch
+    # Fall back to closest earlier epoch, else the latest available. The CSV's epoch
+    # column records the epoch actually used, and main() reports each substitution.
     for epoch_num, filepath in available_epochs:
         if epoch_num < requested_epoch:
             return filepath, epoch_num
-
-    # If no earlier epoch, use the latest available
     return available_epochs[0][1], available_epochs[0][0]
 
 
@@ -780,6 +779,15 @@ def main():
     results = deduplicate_to_latest_experiments(results)
     if results_before_dedup > len(results):
         print(f"Deduplicated to {len(results)} experiments (removed {results_before_dedup - len(results)} older duplicates)")
+
+    # Report experiments scored at an earlier epoch because the requested one has no metrics
+    if args.epoch is not None:
+        substituted = [r for r in results if r.get("epoch") != args.epoch]
+        if substituted:
+            print(f"\nWarning: {len(substituted)} experiments have no epoch {args.epoch} metrics "
+                  f"and use another epoch (the CSV's epoch column):")
+            for r in substituted:
+                print(f"  {r['method']} {r['sequence']} run {r['run']}: epoch {r['epoch']}")
 
     # Print summary statistics
     print_summary_stats(results)
