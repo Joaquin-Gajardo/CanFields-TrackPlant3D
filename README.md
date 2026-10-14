@@ -59,7 +59,7 @@ pip install -r requirements.txt
 # pip install GPUtil==1.4.0 numpy==1.22.4 plyfile==1.1 point_cloud_utils==0.30.4 pynvml==11.5.0 pytest==8.1.1 scikit_learn==1.3.2 scipy==1.7.3 scikit-image==0.19.3 torchdiffeq==0.2.3 wandb==0.16.3 trimesh==4.9.0 open3d==0.19.0
 
 # # TrackPlant3D loader, same commit as GrowFields
-# pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git@96d9eab34083efe91fe3c01ce2b2a61248b2d7e8
+# pip install git+https://github.com/Joaquin-Gajardo/plant-shape-analysis.git@99d86f5fb474accf3b001f1207ff50bd2d343fbb
 ```
 
 <details>
